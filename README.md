@@ -67,10 +67,46 @@ All prices are simulated in log space.
 | `Cointegrated(loadings, spread_half_lives, factor_sigmas, spread_sigmas, assets)` | `log p = log p0 + loadings @ f + s`; `f` random walks, `s` OU spreads | `factor_<k>`, `spread_<asset>` |
 | `StochasticDrift(sigma, drift_mean, drift_half_life, drift_sigma)` | drift plus noise whose drift is OU | `drift.mu` |
 
+### Driven models
+
+These combine input series you give them instead of evolving their own state. `inputs` is a
+list of DataFrames with identical index (a `DatetimeIndex`) and columns, such as paths from the
+models above or real data from Almanac (`load(...)["close"].unstack("symbol")`). The output has
+exactly that index and columns.
+
+| Class | Output, column by column | Hidden state |
+| --- | --- | --- |
+| `LinearCombination(weights, constant=0, sigma=0)` | `Y[t] = constant + sum_i weights[i] * X_i[t] + sigma * sqrt(dt[t]) * eps[t]` | — |
+| `RegimeSwitching(regimes, transition_matrix, initial=None)` | the `LinearCombination` of the current regime; the regime follows a Markov chain | `regime` |
+
+```python
+lin = fm.LinearCombination([1.0, [0.5, -0.5]], constant=0.1, sigma=0.05)
+paths = fm.simulate_driven(lin, [x1, x2], seed=42, n_paths=10)
+
+model = fm.RegimeSwitching(
+    [fm.LinearCombination([1.0, 0.0], sigma=0.05), fm.LinearCombination([0.0, 1.0], sigma=0.2)],
+    transition_matrix=[[0.98, 0.02], [0.05, 0.95]],
+)
+out, hidden = fm.simulate_driven(model, [x1, x2], seed=42, return_hidden=True)[0]
+```
+
+- `weights` has one entry per input series. Each weight, and `constant` and `sigma`, is a
+  scalar (every column), a list with one value per column, or a Series keyed by column.
+- The noise is white: `eps` is independent across rows and columns, from the `noise=` passed to
+  `simulate_driven` (standard Gaussian by default), so it does not accumulate. `sigma` is
+  annualised and `dt[t]` is the time since the previous row, so uneven indexes (weekend gaps)
+  scale the noise by elapsed time. The first row uses the first gap.
+- The inputs are combined as given: pass log prices to combine in log space.
+  NaN in an input gives NaN in the output at that row and column.
+- Regimes: `transition_matrix[i][j]` is the probability of moving from regime `i` to `j` per
+  row; one regime path is shared by all columns. `initial` is a regime, a probability per
+  regime, or `None` for the chain's stationary distribution. The regime path and the noise use
+  separate seeded streams, so changing the noise type leaves the regimes unchanged.
+
 ## Notebooks
 
 `notebooks/` has one notebook per model. Each starts from a parameters cell (model parameters,
-seed, start, frequency, number of steps and paths), simulates, plots the prices and any hidden
+seed, start, frequency, number of steps and paths; for driven models, the inputs too), simulates, plots the prices and any hidden
 state, and runs a quick check of the result against the inputs.
 
 ```bash
@@ -85,6 +121,8 @@ poetry run jupyter lab notebooks/
 | `03_ornstein_uhlenbeck.ipynb` | `OrnsteinUhlenbeck` |
 | `04_cointegrated.ipynb` | `Cointegrated` |
 | `05_stochastic_drift.ipynb` | `StochasticDrift` |
+| `06_linear_combination.ipynb` | `LinearCombination` |
+| `07_regime_switching.ipynb` | `RegimeSwitching` |
 
 Notebooks are committed without outputs; the test suite executes each one.
 
