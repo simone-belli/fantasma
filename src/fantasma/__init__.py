@@ -1,5 +1,8 @@
 """Fantasma: synthetic price paths with known dynamics, in the Almanac data format."""
 
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
+
 from .composite import Composite
 from .driven import DrivenModel, LinearCombination, RegimeSwitching, simulate_driven
 from .grid import RegularGrid, TimeGrid
@@ -17,7 +20,12 @@ from .processes import (
 from .regimes import MarkovChain
 from .simulate import simulate, simulate_on, simulate_states
 
-__version__ = "0.1.0"
+# The version is defined once, in pyproject.toml, and read back from the installed metadata.
+# tests/test_version.py fails if the two disagree (e.g. a bump without `poetry install`).
+try:
+    __version__ = _version("fantasma")
+except PackageNotFoundError:  # running from a source tree that was never installed
+    __version__ = "0+unknown"
 
 __all__ = [
     "Cointegrated",

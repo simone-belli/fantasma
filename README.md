@@ -188,6 +188,13 @@ pytest -m "not recovery and not notebooks"  # basic checks only
 Recovery tests compare estimates with the truth within 4 standard errors of the estimator's
 expected error (analytic, delta-method, or across seeded paths), not fixed thresholds.
 
+## Versioning
+
+The version is set in one place, `version` in `pyproject.toml`; `fantasma.__version__` reads it
+from the installed package metadata. To release, change it there (or `poetry version minor`) and
+re-run `poetry install`. `tests/test_version.py` guards this: it fails if the installed version
+disagrees with `pyproject.toml`, or if a hardcoded `__version__` appears in the sources.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
