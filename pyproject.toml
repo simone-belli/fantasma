@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fantasma"
+version = "0.1.0"
+description = "Synthetic price simulation with known dynamics, in the Almanac data format."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["numpy>=1.26", "pandas>=2.2"]
+
+[project.optional-dependencies]
+notebooks = ["matplotlib>=3.8", "jupyterlab>=4"]
+dev = [
+    "pytest>=8",
+    "statsmodels>=0.14",
+    "ruff>=0.5",
+    "matplotlib>=3.8",
+    "nbformat>=5.9",
+    "nbclient>=0.10",
+    "ipykernel>=6.29",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fantasma"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "recovery: parameter-recovery tests (long simulations, need statsmodels)",
+    "notebooks: execute every notebook in notebooks/",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
