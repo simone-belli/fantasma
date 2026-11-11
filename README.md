@@ -59,6 +59,27 @@ All prices are simulated in log space.
 | `Cointegrated(loadings, spread_half_lives, factor_sigmas, spread_sigmas, assets)` | `log p = log p0 + loadings @ f + s`; `f` random walks, `s` OU spreads | `factor_<k>`, `spread_<asset>` |
 | `StochasticDrift(sigma, drift_mean, drift_half_life, drift_sigma)` | drift plus noise whose drift is OU | `drift.mu` |
 
+## Notebooks
+
+`notebooks/` has one notebook per model. Each starts from a parameters cell (model parameters,
+seed, start, frequency, number of steps and paths), simulates, plots the prices and any hidden
+state, and runs a quick check of the result against the inputs.
+
+```bash
+pip install -e ".[notebooks]"
+jupyter lab notebooks/
+```
+
+| Notebook | Model |
+| --- | --- |
+| `01_random_walk.ipynb` | `RandomWalk` |
+| `02_drift_plus_noise.ipynb` | `DriftPlusNoise` |
+| `03_ornstein_uhlenbeck.ipynb` | `OrnsteinUhlenbeck` |
+| `04_cointegrated.ipynb` | `Cointegrated` |
+| `05_stochastic_drift.ipynb` | `StochasticDrift` |
+
+Notebooks are committed without outputs; the test suite executes each one.
+
 ## Extending
 
 ### A new model is one class
@@ -115,8 +136,12 @@ fm.Composite({"drift": drift, "price": price}, links={"price.mu": "drift.mu"})
 
 ```bash
 pytest                    # basic checks for every model + parameter-recovery tests
-pytest -m "not recovery"  # basic checks only
+pytest -m "not recovery and not notebooks"  # basic checks only
 ```
 
 Recovery tests compare estimates with the truth within 4 standard errors of the estimator's
 expected error (analytic, delta-method, or across seeded paths), not fixed thresholds.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
