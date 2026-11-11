@@ -13,12 +13,14 @@ jobs:
           python-version: "3.12"
 
       - name: Install
-        run: pip install -e ".[dev]"
+        run: |
+          pipx install "poetry>=2.0,<3"
+          poetry install
 
       - name: Lint
         run: |
-          ruff check src tests
-          ruff format --check src tests
+          poetry run ruff check src tests
+          poetry run ruff format --check src tests
 
       - name: Test
-        run: pytest
+        run: poetry run pytest

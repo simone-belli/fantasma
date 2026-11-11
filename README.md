@@ -7,9 +7,17 @@ interchangeable downstream. See [SPEC.md](SPEC.md).
 
 ## Install
 
+Dependencies are managed with [Poetry](https://python-poetry.org/) (2.0+):
+
 ```bash
-pip install -e ".[dev]"        # from a clone; the core needs only numpy and pandas
-poetry add git+https://github.com/simone-belli/fantasma.git   # from a Poetry project
+poetry install                   # from a clone: creates .venv from poetry.lock, with dev tools
+eval $(poetry env activate)      # activate it (or prefix commands with `poetry run`)
+```
+
+From another Poetry project, add Fantasma as a dependency (the core needs only numpy and pandas):
+
+```bash
+poetry add git+https://github.com/simone-belli/fantasma.git    # or: poetry add --editable ../fantasma
 ```
 
 Python 3.12+.
@@ -66,8 +74,8 @@ seed, start, frequency, number of steps and paths), simulates, plots the prices 
 state, and runs a quick check of the result against the inputs.
 
 ```bash
-pip install -e ".[notebooks]"
-jupyter lab notebooks/
+poetry install --with notebooks
+poetry run jupyter lab notebooks/
 ```
 
 | Notebook | Model |
