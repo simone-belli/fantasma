@@ -96,8 +96,7 @@ All models evolve log prices; their output is the log returns.
 
 | Class | Dynamics | Hidden state |
 | --- | --- | --- |
-| `RandomWalk(sigma)` | `dlog p = sigma dW` | — |
-| `DriftPlusNoise(mu, sigma)` | `dlog p = mu dt + sigma dW` | — |
+| `Brownian(sigma, mu=0.0)` | `dlog p = mu dt + sigma dW`; `mu = 0` is the driftless random walk, the null case | — |
 | `OrnsteinUhlenbeck(theta, half_life, sigma, asset=...)` | `dx = kappa (theta - x) dt + sigma dW`, `kappa = ln 2 / half_life`, exact discretisation | — (or `x` when used without an asset) |
 | `Cointegrated(loadings, spread_half_lives, factor_sigmas, spread_sigmas, assets)` | `log p = log p0 + loadings @ f + s`; `f` random walks, `s` OU spreads | `factor_<k>`, `spread_<asset>` |
 | `StochasticDrift(sigma, drift_mean, drift_half_life, drift_sigma)` | drift plus noise whose drift is OU | `drift.mu` |
@@ -113,13 +112,13 @@ A source is any of:
 
 | Source | Name in `res.sources` |
 | --- | --- |
-| a one-asset model, e.g. `fm.RandomWalk(0.2, asset="MKT")`, simulated by Fantasma | its asset |
+| a one-asset model, e.g. `fm.Brownian(0.2, asset="MKT")`, simulated by Fantasma | its asset |
 | `(model, "X")`: asset `X` of a multi-asset model such as `Cointegrated` | `"X"` |
 | data: a log-return `Series` (named) or one-column `DataFrame`, e.g. real prices via `fm.from_prices` | its name / column |
 | another `LinearCombination` or a `RegimeSwitching`, so they nest | its `asset` |
 
 ```python
-mkt = fm.RandomWalk(0.2, asset="MKT")
+mkt = fm.Brownian(0.2, asset="MKT")
 mom = fm.StochasticDrift(0.1, 0.05, 2.0, 0.3, asset="MOM")
 a = fm.LinearCombination([mkt, mom], weights=[1.2, 0.5], sigma=0.1, asset="A")
 b = fm.LinearCombination([mkt, spy], weights=[0.8, -0.3], sigma=0.2, asset="B")  # spy: data
@@ -188,7 +187,7 @@ res.sources["WILD"]       # each regime's own realisation
 `notebooks/` has one notebook per model. Each starts from a parameters cell (model parameters,
 seed, start, frequency, number of steps and paths; for combinations, the sources),
 simulates log returns, plots the prices (via `fm.to_prices`) and any hidden state, and runs a
-quick check of the result against the inputs. `01_random_walk.ipynb` shows all the helpers
+quick check of the result against the inputs. `01_brownian.ipynb` shows all the helpers
 side by side.
 
 ```bash
@@ -198,13 +197,12 @@ poetry run jupyter lab notebooks/
 
 | Notebook | Model |
 | --- | --- |
-| `01_random_walk.ipynb` | `RandomWalk` |
-| `02_drift_plus_noise.ipynb` | `DriftPlusNoise` |
-| `03_ornstein_uhlenbeck.ipynb` | `OrnsteinUhlenbeck` |
-| `04_cointegrated.ipynb` | `Cointegrated` |
-| `05_stochastic_drift.ipynb` | `StochasticDrift` |
-| `06_linear_combination.ipynb` | `LinearCombination` |
-| `07_regime_switching.ipynb` | `RegimeSwitching` |
+| `01_brownian.ipynb` | `Brownian` (with and without drift) |
+| `02_ornstein_uhlenbeck.ipynb` | `OrnsteinUhlenbeck` |
+| `03_cointegrated.ipynb` | `Cointegrated` |
+| `04_stochastic_drift.ipynb` | `StochasticDrift` |
+| `05_linear_combination.ipynb` | `LinearCombination` |
+| `06_regime_switching.ipynb` | `RegimeSwitching` |
 
 Notebooks are committed without outputs; the test suite executes each one.
 
@@ -249,7 +247,7 @@ of the step, so component order is irrelevant. Composites are processes, so they
 
 ```python
 drift = fm.OrnsteinUhlenbeck(0.05, 0.5, 0.1, state_name="mu")
-price = fm.DriftPlusNoise(0.05, 0.2, asset="MOM")
+price = fm.Brownian(0.2, mu=0.05, asset="MOM")
 fm.Composite({"drift": drift, "price": price}, links={"price.mu": "drift.mu"})
 ```
 

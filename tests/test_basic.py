@@ -93,12 +93,12 @@ def test_long_format_matches_almanac(process):
 @pytest.mark.parametrize(
     "make",
     [
-        lambda: fm.RandomWalk(sigma=-0.1),
-        lambda: fm.RandomWalk(sigma=float("nan")),
-        lambda: fm.RandomWalk(sigma=0.1, initial_price=0),
-        lambda: fm.RandomWalk(sigma=0.1, asset=""),
-        lambda: fm.DriftPlusNoise(mu="x", sigma=0.1),
-        lambda: fm.DriftPlusNoise(mu=float("inf"), sigma=0.1),
+        lambda: fm.Brownian(sigma=-0.1),
+        lambda: fm.Brownian(sigma=float("nan")),
+        lambda: fm.Brownian(sigma=0.1, initial_price=0),
+        lambda: fm.Brownian(sigma=0.1, asset=""),
+        lambda: fm.Brownian(0.1, mu="x"),
+        lambda: fm.Brownian(0.1, mu=float("inf")),
         lambda: fm.OrnsteinUhlenbeck(theta=0, half_life=0, sigma=0.1),
         lambda: fm.OrnsteinUhlenbeck(theta=0, half_life=-1, sigma=0.1),
         lambda: fm.OrnsteinUhlenbeck(theta=0, half_life=1, sigma=-0.1),
@@ -132,22 +132,33 @@ def test_parameter_validation(make):
 )
 def test_run_validation(kwargs):
     with pytest.raises(ValueError):
-        fm.simulate(fm.RandomWalk(0.1), seed=0, **kwargs)
+        fm.simulate(fm.Brownian(0.1), seed=0, **kwargs)
 
 
 def test_seed_required():
     with pytest.raises(ValueError):
-        fm.simulate(fm.RandomWalk(0.1), start="2024-01-01", freq="1d", n_steps=5, seed=None)
+        fm.simulate(fm.Brownian(0.1), start="2024-01-01", freq="1d", n_steps=5, seed=None)
 
 
 def test_single_path_is_returned_itself():
-    one = fm.simulate(fm.RandomWalk(0.2), seed=3, **RUN)  # n_paths=1 is the default
+    one = fm.simulate(fm.Brownian(0.2), seed=3, **RUN)  # n_paths=1 is the default
     assert isinstance(one, pd.DataFrame)
-    log_returns, hidden = fm.simulate(fm.RandomWalk(0.2), seed=3, return_hidden=True, **RUN)
+    log_returns, hidden = fm.simulate(fm.Brownian(0.2), seed=3, return_hidden=True, **RUN)
     assert isinstance(log_returns, pd.DataFrame) and isinstance(hidden, pd.DataFrame)
-    many = fm.simulate(fm.RandomWalk(0.2), seed=3, n_paths=2, **RUN)
+    many = fm.simulate(fm.Brownian(0.2), seed=3, n_paths=2, **RUN)
     assert isinstance(many, list) and len(many) == 2
     pd.testing.assert_frame_equal(one, many[0])
     grid = fm.RegularGrid(RUN["start"], RUN["freq"], n_steps=RUN["n_steps"])
-    pd.testing.assert_frame_equal(fm.simulate_on(fm.RandomWalk(0.2), grid, seed=3), one)
-    assert len(fm.simulate_on(fm.RandomWalk(0.2), grid, seed=3, n_paths=2)) == 2
+    pd.testing.assert_frame_equal(fm.simulate_on(fm.Brownian(0.2), grid, seed=3), one)
+    assert len(fm.simulate_on(fm.Brownian(0.2), grid, seed=3, n_paths=2)) == 2
+
+
+def test_brownian_drift_defaults_to_zero_and_enters_as_mu_dt():
+    class Zero(fm.Noise):
+        def sample(self, rng, n_steps, n_shocks):
+            return np.zeros((n_steps, n_shocks))
+
+    assert fm.Brownian(0.2).params["mu"] == 0.0
+    run = dict(start="2024-01-01", freq="1d", n_steps=10, seed=0, noise=Zero())
+    np.testing.assert_array_equal(fm.simulate(fm.Brownian(0.2), **run), 0.0)
+    np.testing.assert_allclose(fm.simulate(fm.Brownian(0.2, mu=0.3), **run), 0.3 / 365.25)

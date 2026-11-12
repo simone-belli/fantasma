@@ -66,7 +66,7 @@ def test_from_prices_accepts_unlabelled_real_data():
     ],
 )
 def test_explicit_initial_price_overrides_attrs(initial_price, expected):
-    model = fm.Composite({c: fm.RandomWalk(0.2, asset=c) for c in ("X", "Y")})
+    model = fm.Composite({c: fm.Brownian(0.2, asset=c) for c in ("X", "Y")})
     log_returns = fm.simulate(model, seed=0, **RUN)
     prices = fm.to_prices(log_returns, initial_price=initial_price)
     np.testing.assert_allclose(prices.iloc[0], expected)
@@ -75,13 +75,13 @@ def test_explicit_initial_price_overrides_attrs(initial_price, expected):
 
 
 def test_explicit_start():
-    log_returns = fm.simulate(fm.RandomWalk(0.2), seed=0, **RUN)
+    log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     earlier = pd.Timestamp("2023-12-31 23:00", tz="UTC")
     assert fm.to_prices(log_returns, start=earlier).index[0] == earlier
 
 
 def test_missing_attrs_need_arguments():
-    log_returns = fm.simulate(fm.RandomWalk(0.2), seed=0, **RUN)
+    log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     plain = log_returns.copy()
     plain.attrs.clear()
     with pytest.raises(ValueError, match="initial_price is needed"):
@@ -103,13 +103,13 @@ def test_missing_attrs_need_arguments():
     ],
 )
 def test_bad_arguments(kwargs, match):
-    log_returns = fm.simulate(fm.RandomWalk(0.2), seed=0, **RUN)
+    log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     with pytest.raises(ValueError, match=match):
         fm.to_prices(log_returns, **kwargs)
 
 
 def test_mislabelled_frames_are_refused():
-    log_returns = fm.simulate(fm.RandomWalk(0.2), seed=0, **RUN)
+    log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     prices = fm.to_prices(log_returns)
     for helper in (fm.to_prices, fm.to_log_prices, fm.to_returns):
         with pytest.raises(ValueError, match="takes log returns"):
@@ -129,7 +129,7 @@ def test_from_prices_validation():
 
 
 def test_nan_propagates_to_later_levels():
-    log_returns = fm.simulate(fm.RandomWalk(0.2), seed=0, **RUN)
+    log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     log_returns.iloc[10, 0] = np.nan
     prices = fm.to_prices(log_returns)
     assert prices.iloc[:11].notna().all().all()  # start + the first 10 returns

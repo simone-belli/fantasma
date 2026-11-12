@@ -12,13 +12,13 @@ P2 = [[0.9, 0.1], [0.2, 0.8]]
 
 
 def mkt():
-    return fm.RandomWalk(0.2, asset="MKT")
+    return fm.Brownian(0.2, asset="MKT")
 
 
 def data(name="SPY", n_steps=500, seed=9):
     """A log-return Series, as real data converted with fm.from_prices would be."""
     r = fm.simulate(
-        fm.RandomWalk(0.15, asset=name), start="2024-01-01", freq="1d", n_steps=n_steps, seed=seed
+        fm.Brownian(0.15, asset=name), start="2024-01-01", freq="1d", n_steps=n_steps, seed=seed
     )
     return r[name]
 
@@ -76,7 +76,7 @@ def test_three_regimes_and_one_asset_of_a_multi_asset_model():
 
 def test_fixed_initial_regime_and_absorbing_chain():
     node = fm.RegimeSwitching(
-        [mkt(), fm.RandomWalk(0.5, asset="B")], [[1.0, 0.0], [0.0, 1.0]], initial=1, asset="R"
+        [mkt(), fm.Brownian(0.5, asset="B")], [[1.0, 0.0], [0.0, 1.0]], initial=1, asset="R"
     )
     res = run(node, seed=0, **GRID)
     assert (res.regimes["R"] == 1).all()
@@ -85,7 +85,7 @@ def test_fixed_initial_regime_and_absorbing_chain():
 
 def test_initial_distribution():
     node = fm.RegimeSwitching(
-        [mkt(), fm.RandomWalk(0.5, asset="B")], P2, initial=[0.0, 1.0], asset="R"
+        [mkt(), fm.Brownian(0.5, asset="B")], P2, initial=[0.0, 1.0], asset="R"
     )
     assert run(node, seed=0, **GRID).regimes["R"].iloc[0] == 1
 
@@ -105,7 +105,7 @@ def test_regimes_do_not_depend_on_the_noise_type():
         def sample(self, rng, n_steps, n_shocks):
             return np.zeros((n_steps, n_shocks))
 
-    node = fm.RegimeSwitching([mkt(), fm.RandomWalk(0.5, asset="B")], P2, asset="R")
+    node = fm.RegimeSwitching([mkt(), fm.Brownian(0.5, asset="B")], P2, asset="R")
     a = run(node, seed=6, **GRID)
     b = run(node, seed=6, noise=Zero(), **GRID)
     pd.testing.assert_frame_equal(a.regimes, b.regimes)
@@ -125,7 +125,7 @@ def test_a_model_shared_by_regimes_is_simulated_once():
 
 def test_regime_switching_inside_a_linear_combination_and_the_reverse():
     m = mkt()
-    inner = fm.RegimeSwitching([m, fm.RandomWalk(0.5, asset="B")], P2, asset="INNER")
+    inner = fm.RegimeSwitching([m, fm.Brownian(0.5, asset="B")], P2, asset="INNER")
     outer = fm.LinearCombination([inner, m], weights=[0.5, 1.0], asset="OUTER")
     res = run(outer, seed=4, **GRID)
     assert isinstance(res.sources["INNER"], fm.PathResult)
@@ -141,7 +141,7 @@ def test_regime_switching_inside_a_linear_combination_and_the_reverse():
 
 def test_simulated_together_with_a_combination():
     m = mkt()
-    reg = fm.RegimeSwitching([m, fm.RandomWalk(0.5, asset="B")], P2, asset="R")
+    reg = fm.RegimeSwitching([m, fm.Brownian(0.5, asset="B")], P2, asset="R")
     lin = fm.LinearCombination([m], weights=[1.0], asset="L")
     res = run([reg, lin], seed=5, **GRID)
     assert list(res.output.columns) == ["R", "L"]
@@ -154,7 +154,7 @@ def test_simulated_together_with_a_combination():
 
 def test_plain_output_single_path_and_prices():
     node = fm.RegimeSwitching(
-        [mkt(), fm.RandomWalk(0.5, asset="B")], P2, asset="R", initial_price=50.0
+        [mkt(), fm.Brownian(0.5, asset="B")], P2, asset="R", initial_price=50.0
     )
     plain = fm.simulate(node, seed=0, **GRID)
     assert isinstance(plain, pd.DataFrame) and plain.attrs["quantity"] == "log_return"

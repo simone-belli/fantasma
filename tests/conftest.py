@@ -4,8 +4,8 @@ import fantasma as fm
 
 # One factory per v1 process, with reasonable parameters.
 PROCESSES = {
-    "random_walk": lambda: fm.RandomWalk(sigma=0.2, asset="RW"),
-    "drift_plus_noise": lambda: fm.DriftPlusNoise(mu=0.1, sigma=0.2, asset="DN"),
+    "brownian": lambda: fm.Brownian(sigma=0.2, asset="RW"),
+    "brownian_drift": lambda: fm.Brownian(0.2, mu=0.1, asset="DN"),
     "ou": lambda: fm.OrnsteinUhlenbeck(theta=4.6, half_life=0.1, sigma=0.3, asset="OU"),
     "cointegrated": lambda: fm.Cointegrated(
         loadings=[[1.0], [0.5], [2.0]],
@@ -20,16 +20,16 @@ PROCESSES = {
 }
 
 ASSETS = {
-    "random_walk": ["RW"],
-    "drift_plus_noise": ["DN"],
+    "brownian": ["RW"],
+    "brownian_drift": ["DN"],
     "ou": ["OU"],
     "cointegrated": ["X", "Y", "Z"],
     "stochastic_drift": ["SD"],
 }
 
 HIDDEN = {
-    "random_walk": [],
-    "drift_plus_noise": [],
+    "brownian": [],
+    "brownian_drift": [],
     "ou": [],
     "cointegrated": ["factor_0", "spread_X", "spread_Y", "spread_Z"],
     "stochastic_drift": ["drift.mu"],

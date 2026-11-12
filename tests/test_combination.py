@@ -12,13 +12,13 @@ DT = 1 / 365.25
 
 
 def mkt():
-    return fm.RandomWalk(0.2, asset="MKT")
+    return fm.Brownian(0.2, asset="MKT")
 
 
 def data(name="SPY", n_steps=300, seed=9, freq="1d"):
     """A log-return Series, as real data converted with fm.from_prices would be."""
     r = fm.simulate(
-        fm.RandomWalk(0.15, asset=name), start="2024-01-01", freq=freq, n_steps=n_steps, seed=seed
+        fm.Brownian(0.15, asset=name), start="2024-01-01", freq=freq, n_steps=n_steps, seed=seed
     )
     return r[name]
 
@@ -94,7 +94,7 @@ def test_same_model_object_is_simulated_once():
 
 def test_equal_but_distinct_models_are_independent():
     a = fm.LinearCombination([mkt()], weights=[1.0], asset="A")
-    b = fm.LinearCombination([fm.RandomWalk(0.2, asset="MKT2")], weights=[1.0], asset="B")
+    b = fm.LinearCombination([fm.Brownian(0.2, asset="MKT2")], weights=[1.0], asset="B")
     res = run([a, b], seed=1, **GRID)
     assert not np.allclose(res.output["A"], res.output["B"])
 

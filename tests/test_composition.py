@@ -9,7 +9,7 @@ import fantasma as fm
 def test_stochastic_drift_equals_hand_wired_composite():
     built = fm.StochasticDrift(sigma=0.2, drift_mean=0.05, drift_half_life=0.5, drift_sigma=0.1)
     drift = fm.OrnsteinUhlenbeck(0.05, 0.5, 0.1, state_name="mu")
-    price = fm.DriftPlusNoise(0.05, 0.2, asset="ASSET")
+    price = fm.Brownian(0.2, mu=0.05, asset="ASSET")
     wired = fm.Composite({"drift": drift, "price": price}, links={"price.mu": "drift.mu"})
     run = dict(start="2024-01-01", freq="1h", n_steps=200, seed=5)
     np.testing.assert_array_equal(fm.simulate(built, **run), fm.simulate(wired, **run))
@@ -38,7 +38,7 @@ def test_nested_composites_and_multiple_assets():
 
 
 def test_ou_level_drives_ou_mean():
-    level = fm.RandomWalk(0.1, asset="L")  # observable log price used as a moving target
+    level = fm.Brownian(0.1, asset="L")  # observable log price used as a moving target
     follower = fm.OrnsteinUhlenbeck(4.6, 0.01, 0.0, asset="F", x0=np.log(100))
     model = fm.Composite({"l": level, "f": follower}, links={"f.theta": "l.log_price"})
     log_returns = fm.simulate(model, start="2024-01-01", freq="1d", n_steps=50, seed=0)
@@ -60,14 +60,14 @@ def test_ou_level_drives_ou_mean():
 )
 def test_bad_links_rejected(links):
     drift = fm.OrnsteinUhlenbeck(0.0, 1.0, 0.1, state_name="mu")
-    price = fm.DriftPlusNoise(0.0, 0.2)
+    price = fm.Brownian(0.2, mu=0.0)
     with pytest.raises(ValueError):
         fm.Composite({"drift": drift, "price": price}, links=links)
 
 
 def test_duplicate_assets_rejected():
     with pytest.raises(ValueError):
-        fm.Composite({"a": fm.RandomWalk(0.1, asset="X"), "b": fm.RandomWalk(0.1, asset="X")})
+        fm.Composite({"a": fm.Brownian(0.1, asset="X"), "b": fm.Brownian(0.1, asset="X")})
 
 
 def test_custom_noise_is_used():
@@ -76,6 +76,6 @@ def test_custom_noise_is_used():
             return np.zeros((n_steps, n_shocks))
 
     log_returns = fm.simulate(
-        fm.DriftPlusNoise(0.1, 0.5), start="2024-01-01", freq="1d", n_steps=10, seed=0, noise=Zero()
+        fm.Brownian(0.5, mu=0.1), start="2024-01-01", freq="1d", n_steps=10, seed=0, noise=Zero()
     )
     np.testing.assert_allclose(log_returns["ASSET"], 0.1 / 365.25)

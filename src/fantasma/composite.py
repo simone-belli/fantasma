@@ -22,7 +22,7 @@ class Composite(Process):
     must be distinct. Shocks are split between components in component order.
 
     >>> drift = OrnsteinUhlenbeck(theta=0.05, half_life=0.5, sigma=0.1, state_name="drift")
-    >>> price = DriftPlusNoise(mu=0.0, sigma=0.2, asset="A")
+    >>> price = Brownian(sigma=0.2, asset="A")
     >>> Composite({"A": drift, "A_price": price}, links={"A_price.mu": "A.drift"})
     """
 

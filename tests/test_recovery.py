@@ -26,18 +26,18 @@ def daily(process, n_steps, seed, **kw):
     return fm.simulate(process, start="2000-01-01", freq="1d", n_steps=n_steps, seed=seed, **kw)
 
 
-def test_random_walk_realised_vol():
+def test_brownian_realised_vol():
     sigma, n = 0.2, 50_000
-    log_returns = daily(fm.RandomWalk(sigma), n, seed=10)
+    log_returns = daily(fm.Brownian(sigma), n, seed=10)
     r = log_returns["ASSET"].to_numpy()
     sigma_hat = np.sqrt(np.mean(r**2) / DT)  # known zero mean
     se = sigma / np.sqrt(2 * n)
     assert abs(sigma_hat - sigma) < Z * se
 
 
-def test_drift_plus_noise_drift_and_vol():
+def test_brownian_drift_and_vol():
     mu, sigma, n = 0.1, 0.2, 73_000  # 200 years, so the drift is measurable
-    log_returns = daily(fm.DriftPlusNoise(mu, sigma), n, seed=11)
+    log_returns = daily(fm.Brownian(sigma, mu=mu), n, seed=11)
     r = log_returns["ASSET"].to_numpy()
     mu_hat = r.mean() / DT
     sigma_hat = r.std(ddof=1) / np.sqrt(DT)
@@ -145,7 +145,7 @@ def test_stochastic_drift_kalman_tracks_hidden_drift():
 
 def test_linear_combination_ols_recovers_weights_constant_sigma():
     # Two outputs sharing one market source, plus their own second source.
-    mkt = fm.RandomWalk(0.3, asset="MKT")
+    mkt = fm.Brownian(0.3, asset="MKT")
     mom = fm.StochasticDrift(0.2, 0.05, 1.0, 0.3, asset="MOM")
     ou = fm.OrnsteinUhlenbeck(np.log(100), 0.2, 0.3, asset="OU")
     combos = [
@@ -169,7 +169,7 @@ def test_linear_combination_ols_recovers_weights_constant_sigma():
 
 def test_regime_switching_recovers_transitions_and_regime_parameters():
     P = np.array([[0.95, 0.04, 0.01], [0.05, 0.9, 0.05], [0.02, 0.08, 0.9]])
-    x1, x2 = fm.RandomWalk(0.3, asset="X1"), fm.RandomWalk(0.3, asset="X2")
+    x1, x2 = fm.Brownian(0.3, asset="X1"), fm.Brownian(0.3, asset="X2")
     regimes = [
         fm.LinearCombination([x1, x2], [1.0, 0.0], sigma=0.05, asset="R0"),
         fm.LinearCombination([x1, x2], [0.5, 0.5], sigma=0.1, asset="R1", constant=1.0),

@@ -10,10 +10,9 @@ from .noise import GaussianNoise, Noise
 from .output import to_long
 from .process import Process
 from .processes import (
+    Brownian,
     Cointegrated,
-    DriftPlusNoise,
     OrnsteinUhlenbeck,
-    RandomWalk,
     StochasticDrift,
     half_life_to_kappa,
 )
@@ -29,9 +28,9 @@ except PackageNotFoundError:  # running from a source tree that was never instal
     __version__ = "0+unknown"
 
 __all__ = [
+    "Brownian",
     "Cointegrated",
     "Composite",
-    "DriftPlusNoise",
     "GaussianNoise",
     "IndexGrid",
     "LinearCombination",
@@ -40,7 +39,6 @@ __all__ = [
     "OrnsteinUhlenbeck",
     "PathResult",
     "Process",
-    "RandomWalk",
     "RegimeSwitching",
     "RegularGrid",
     "SourceRealisation",
