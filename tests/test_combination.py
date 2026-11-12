@@ -17,14 +17,14 @@ def mkt():
 
 def data(name="SPY", n_steps=300, seed=9, freq="1d"):
     """A log-return Series, as real data converted with fm.from_prices would be."""
-    (r,) = fm.simulate(
+    r = fm.simulate(
         fm.RandomWalk(0.15, asset=name), start="2024-01-01", freq=freq, n_steps=n_steps, seed=seed
     )
     return r[name]
 
 
 def run(combos, **kw):
-    return fm.simulate(combos, return_hidden=True, **kw)[0]
+    return fm.simulate(combos, return_hidden=True, **kw)
 
 
 # --- the formula ------------------------------------------------------------------------------
@@ -145,14 +145,14 @@ def test_path_result_and_plain_output():
     assert res.sources["SPY"].output["SPY"].equals(spy)
     assert res.sources["SPY"].hidden.shape[1] == 0
 
-    (plain,) = fm.simulate(combo, seed=0)
+    plain = fm.simulate(combo, seed=0)
     pd.testing.assert_frame_equal(plain, res.output)
     assert plain.attrs["quantity"] == "log_return"
 
 
 def test_to_prices_starts_at_initial_price():
     combo = fm.LinearCombination([mkt()], weights=[1.0], asset="A", initial_price=50.0)
-    (out,) = fm.simulate(combo, seed=0, **GRID)
+    out = fm.simulate(combo, seed=0, **GRID)
     prices = fm.to_prices(out)
     assert prices.index[0] == pd.Timestamp("2024-01-01")
     np.testing.assert_allclose(prices.iloc[0], 50.0)
@@ -165,9 +165,9 @@ def test_reproducible_and_path_stable():
     for x, y in zip(a, b, strict=True):
         pd.testing.assert_frame_equal(x, y)
     assert not np.allclose(a[0], a[1])
-    (other,) = fm.simulate(combo, seed=8)
+    other = fm.simulate(combo, seed=8)
     assert not np.allclose(a[0], other)
-    (first,) = fm.simulate(combo, seed=7, n_paths=1)
+    first = fm.simulate(combo, seed=7, n_paths=1)
     pd.testing.assert_frame_equal(first, a[0])
 
 
@@ -234,3 +234,13 @@ def test_validation_at_simulation():
 def test_plain_models_still_need_a_grid():
     with pytest.raises(ValueError, match="start and freq"):
         fm.simulate(mkt(), seed=0, n_steps=5)
+
+
+def test_single_path_is_returned_itself():
+    combo = fm.LinearCombination([mkt()], weights=[1.0], sigma=0.1, asset="A")
+    assert isinstance(fm.simulate(combo, seed=0, **GRID), pd.DataFrame)
+    one = fm.simulate(combo, seed=0, return_hidden=True, **GRID)
+    assert isinstance(one, fm.PathResult)
+    many = fm.simulate(combo, seed=0, n_paths=2, return_hidden=True, **GRID)
+    assert isinstance(many, list) and len(many) == 2
+    pd.testing.assert_frame_equal(one.output, many[0].output)

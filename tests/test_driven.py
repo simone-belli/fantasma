@@ -72,7 +72,7 @@ def test_arbitrary_columns_and_index_preserved():
     idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-08"], name="when")
     cols = pd.Index(["a", "b", "c"], name="things")
     x = pd.DataFrame(np.arange(9.0).reshape(3, 3), index=idx, columns=cols)
-    (out,) = fm.simulate_driven(lin([2.0], constant=0.0), [x], seed=0)
+    out = fm.simulate_driven(lin([2.0], constant=0.0), [x], seed=0)
     pd.testing.assert_frame_equal(out, 2.0 * x, check_flags=False)
 
 
@@ -88,9 +88,9 @@ def test_same_seed_same_output(model):
 def test_different_seeds_and_paths_differ(model):
     inputs = make_inputs()
     a, b = fm.simulate_driven(model, inputs, seed=1, n_paths=2)
-    (c,) = fm.simulate_driven(model, inputs, seed=2)
+    c = fm.simulate_driven(model, inputs, seed=2)
     assert not np.allclose(a, b) and not np.allclose(a, c)
-    (first,) = fm.simulate_driven(model, inputs, seed=1)
+    first = fm.simulate_driven(model, inputs, seed=1)
     pd.testing.assert_frame_equal(first, a)
 
 
@@ -100,7 +100,7 @@ def test_different_seeds_and_paths_differ(model):
 def test_noise_free_combination_is_exact():
     x1, x2 = make_inputs()
     model = lin([0.5, [1.0, -2.0]], constant=[3.0, 4.0], sigma=0.0)
-    (out,) = fm.simulate_driven(model, [x1, x2], seed=0)
+    out = fm.simulate_driven(model, [x1, x2], seed=0)
     dt = 1 / 365.25  # the constant is an annualised drift
     expected = pd.DataFrame(
         {
@@ -118,15 +118,15 @@ def test_series_parameters_are_matched_by_column():
     )
     by_list = lin([[1.0, 2.0], 0.0], constant=[5.0, 0.0])
     pd.testing.assert_frame_equal(
-        fm.simulate_driven(by_series, [x1, x2], seed=0)[0],
-        fm.simulate_driven(by_list, [x1, x2], seed=0)[0],
+        fm.simulate_driven(by_series, [x1, x2], seed=0),
+        fm.simulate_driven(by_list, [x1, x2], seed=0),
     )
 
 
 def test_noise_scales_with_sqrt_dt_and_sigma():
     x1, x2 = make_inputs(n_steps=20_000)
     model = lin([1.0, 0.0], sigma=[0.1, 0.4])
-    (out,) = fm.simulate_driven(model, [x1, x2], seed=3)
+    out = fm.simulate_driven(model, [x1, x2], seed=3)
     resid = (out - x1).to_numpy()
     sd = resid.std(axis=0, ddof=0) / np.sqrt(1 / 365.25)
     se = np.array([0.1, 0.4]) / np.sqrt(2 * len(resid))
@@ -141,7 +141,7 @@ def test_uneven_index_scales_noise_by_elapsed_time():
         def sample(self, rng, n_steps, n_shocks):
             return np.ones((n_steps, n_shocks))
 
-    (out,) = fm.simulate_driven(lin([1.0], sigma=1.0), [x], seed=0, noise=Ones())
+    out = fm.simulate_driven(lin([1.0], sigma=1.0), [x], seed=0, noise=Ones())
     days = np.array([1, 1, 4])  # the first row uses the first gap
     np.testing.assert_allclose(out["A"], np.sqrt(days / 365.25))
 
@@ -152,15 +152,15 @@ def test_custom_noise_is_used(model):
             return np.zeros((n_steps, n_shocks))
 
     inputs = make_inputs()
-    (noisy,) = fm.simulate_driven(model, inputs, seed=0)
-    (quiet,) = fm.simulate_driven(model, inputs, seed=0, noise=Zero())
+    noisy = fm.simulate_driven(model, inputs, seed=0)
+    quiet = fm.simulate_driven(model, inputs, seed=0, noise=Zero())
     assert not np.allclose(noisy, quiet)
 
 
 def test_nan_inputs_propagate():
     x1, x2 = make_inputs()
     x1.iloc[10, 0] = np.nan
-    (out,) = fm.simulate_driven(lin([1.0, 1.0], sigma=0.1), [x1, x2], seed=0)
+    out = fm.simulate_driven(lin([1.0, 1.0], sigma=0.1), [x1, x2], seed=0)
     assert np.isnan(out.iloc[10, 0]) and out.drop(out.index[10]).notna().all().all()
 
 
@@ -172,16 +172,14 @@ def test_identical_regimes_equal_a_single_regime():
     params = dict(weights=[0.5, 1.5], constant=1.0, sigma=0.3)
     two = fm.RegimeSwitching([params, params], transition_matrix=[[0.5, 0.5], [0.5, 0.5]])
     pd.testing.assert_frame_equal(
-        fm.simulate_driven(lin(**params), inputs, seed=4)[0],
-        fm.simulate_driven(two, inputs, seed=4)[0],
+        fm.simulate_driven(lin(**params), inputs, seed=4),
+        fm.simulate_driven(two, inputs, seed=4),
     )
 
 
 def test_output_follows_the_regime():
     x1, x2 = make_inputs()
-    ((out, hidden),) = fm.simulate_driven(
-        two_regimes(sigma=0.0), [x1, x2], seed=2, return_hidden=True
-    )
+    out, hidden = fm.simulate_driven(two_regimes(sigma=0.0), [x1, x2], seed=2, return_hidden=True)
     regime = hidden["regime"].to_numpy()
     assert set(np.unique(regime)) == {0, 1}
     expected = np.where(regime[:, None] == 0, x1.to_numpy(), 10.0 / 365.25 + x2.to_numpy())
@@ -194,8 +192,8 @@ def test_regimes_do_not_depend_on_noise_type():
             return np.zeros((n_steps, n_shocks))
 
     inputs = make_inputs()
-    ((_, a),) = fm.simulate_driven(two_regimes(), inputs, seed=6, return_hidden=True)
-    ((_, b),) = fm.simulate_driven(two_regimes(), inputs, seed=6, return_hidden=True, noise=Zero())
+    _, a = fm.simulate_driven(two_regimes(), inputs, seed=6, return_hidden=True)
+    _, b = fm.simulate_driven(two_regimes(), inputs, seed=6, return_hidden=True, noise=Zero())
     pd.testing.assert_frame_equal(a, b)
 
 
@@ -206,7 +204,7 @@ def test_fixed_initial_regime_and_absorbing_state():
         initial=1,
     )
     (x, _) = make_inputs()
-    ((_, hidden),) = fm.simulate_driven(model, [x], seed=0, return_hidden=True)
+    _, hidden = fm.simulate_driven(model, [x], seed=0, return_hidden=True)
     assert (hidden["regime"] == 1).all()
 
 
@@ -302,14 +300,14 @@ def test_run_validation():
 def test_uneven_index_scales_drift_by_elapsed_time():
     idx = pd.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-06"])
     x = pd.DataFrame({"A": [0.0, 0.0, 0.0]}, index=idx)
-    (out,) = fm.simulate_driven(lin([1.0], constant=2.0), [x], seed=0)
+    out = fm.simulate_driven(lin([1.0], constant=2.0), [x], seed=0)
     days = np.array([1, 1, 4])  # the first row uses the first gap
     np.testing.assert_allclose(out["A"], 2.0 * days / 365.25)
 
 
 def test_output_is_labelled_and_keeps_the_inputs_start(model):
     inputs = make_inputs()
-    (out,) = fm.simulate_driven(model, inputs, seed=0)
+    out = fm.simulate_driven(model, inputs, seed=0)
     assert out.attrs["quantity"] == "log_return"
     assert out.attrs["start"] == inputs[0].attrs["start"]
     assert "initial_log_price" not in out.attrs  # no natural starting price...
@@ -324,7 +322,7 @@ def test_start_dropped_when_inputs_disagree():
     a, _ = make_inputs()
     b = a.copy()
     b.attrs["start"] = pd.Timestamp("2023-12-31")
-    (out,) = fm.simulate_driven(lin([1.0, 1.0]), [a, b], seed=0)
+    out = fm.simulate_driven(lin([1.0, 1.0]), [a, b], seed=0)
     assert "start" not in out.attrs
 
 
@@ -335,3 +333,14 @@ def test_prices_are_refused_as_inputs():
     # Converted back to log returns they are accepted.
     inputs = [fm.from_prices(p) for p in prices]
     fm.simulate_driven(lin([1.0, 1.0]), inputs, seed=0)
+
+
+def test_single_path_is_returned_itself():
+    inputs = make_inputs()
+    one = fm.simulate_driven(two_regimes(), inputs, seed=0)
+    assert isinstance(one, pd.DataFrame)
+    out, hidden = fm.simulate_driven(two_regimes(), inputs, seed=0, return_hidden=True)
+    assert isinstance(hidden, pd.DataFrame) and list(hidden.columns) == ["regime"]
+    many = fm.simulate_driven(two_regimes(), inputs, seed=0, n_paths=2)
+    assert isinstance(many, list) and len(many) == 2
+    pd.testing.assert_frame_equal(one, many[0])

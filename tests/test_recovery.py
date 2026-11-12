@@ -28,7 +28,7 @@ def daily(process, n_steps, seed, **kw):
 
 def test_random_walk_realised_vol():
     sigma, n = 0.2, 50_000
-    (log_returns,) = daily(fm.RandomWalk(sigma), n, seed=10)
+    log_returns = daily(fm.RandomWalk(sigma), n, seed=10)
     r = log_returns["ASSET"].to_numpy()
     sigma_hat = np.sqrt(np.mean(r**2) / DT)  # known zero mean
     se = sigma / np.sqrt(2 * n)
@@ -37,7 +37,7 @@ def test_random_walk_realised_vol():
 
 def test_drift_plus_noise_drift_and_vol():
     mu, sigma, n = 0.1, 0.2, 73_000  # 200 years, so the drift is measurable
-    (log_returns,) = daily(fm.DriftPlusNoise(mu, sigma), n, seed=11)
+    log_returns = daily(fm.DriftPlusNoise(mu, sigma), n, seed=11)
     r = log_returns["ASSET"].to_numpy()
     mu_hat = r.mean() / DT
     sigma_hat = r.std(ddof=1) / np.sqrt(DT)
@@ -47,7 +47,7 @@ def test_drift_plus_noise_drift_and_vol():
 
 def test_ou_ar1_recovers_mean_and_half_life():
     theta, half_life, sigma, n = np.log(50.0), 0.1, 0.3, 50_000
-    (log_returns,) = daily(fm.OrnsteinUhlenbeck(theta, half_life, sigma, asset="OU"), n, seed=12)
+    log_returns = daily(fm.OrnsteinUhlenbeck(theta, half_life, sigma, asset="OU"), n, seed=12)
     x = fm.to_log_prices(log_returns)["OU"].to_numpy()
     fit = sm.OLS(x[1:], sm.add_constant(x[:-1])).fit()
     (a, b), cov = fit.params, fit.cov_params()
@@ -118,7 +118,7 @@ def kalman_drift(r, dt, sigma, mean, half_life, drift_sigma, mu0):
 def test_stochastic_drift_kalman_tracks_hidden_drift():
     params = dict(sigma=0.1, drift_mean=0.05, drift_half_life=2.0, drift_sigma=0.3)
     model = fm.StochasticDrift(**params)
-    ((log_returns, hidden),) = daily(model, 40_000, seed=14, return_hidden=True)
+    log_returns, hidden = daily(model, 40_000, seed=14, return_hidden=True)
     r = log_returns["ASSET"].to_numpy()
     # Hidden state is on the full grid: return t is driven by the drift at the start of its step.
     true_mu = hidden["drift.mu"].to_numpy()[:-1]
@@ -158,7 +158,7 @@ def test_linear_combination_ols_recovers_weights_constant_sigma():
         fm.LinearCombination([mkt, mom], weights=[0.8, -0.5], sigma=0.05, asset="A", constant=0.2),
         fm.LinearCombination([mkt, ou], weights=[1.5, 0.3], sigma=0.1, asset="B", constant=-1.0),
     ]
-    (res,) = fm.simulate(
+    res = fm.simulate(
         combos, start="2000-01-01", freq="1d", n_steps=20_000, seed=21, return_hidden=True
     )
     for combo in combos:
@@ -182,7 +182,7 @@ def test_regime_switching_recovers_transitions_and_regime_parameters():
     ]
     x1, x2 = driven_inputs(30_000, seed=22)
     model = fm.RegimeSwitching(regimes, transition_matrix=P)
-    ((out, hidden),) = fm.simulate_driven(model, [x1, x2], seed=23, return_hidden=True)
+    out, hidden = fm.simulate_driven(model, [x1, x2], seed=23, return_hidden=True)
     r = hidden["regime"].to_numpy()
 
     # Transition probabilities: counts from each regime are multinomial.

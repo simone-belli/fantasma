@@ -27,8 +27,8 @@ def test_timezone_start_converted_to_utc():
 
 
 def test_days_per_year_override():
-    (a,) = fm.simulate(fm.RandomWalk(0.2), start="2024-01-01", freq="1d", n_steps=3, seed=0)
+    a = fm.simulate(fm.RandomWalk(0.2), start="2024-01-01", freq="1d", n_steps=3, seed=0)
     grid = fm.RegularGrid("2024-01-01", "1d", n_steps=3, days_per_year=252)
     assert grid.dt == pytest.approx(1 / 252)
-    (b,) = fm.simulate_on(fm.RandomWalk(0.2), grid, seed=0)
+    b = fm.simulate_on(fm.RandomWalk(0.2), grid, seed=0)
     assert not np.allclose(a.to_numpy(), b.to_numpy())

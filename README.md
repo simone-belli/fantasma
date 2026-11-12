@@ -54,16 +54,21 @@ import fantasma as fm
 
 model = fm.StochasticDrift(sigma=0.2, drift_mean=0.05, drift_half_life=0.5, drift_sigma=0.1,
                            asset="MOM")
-paths = fm.simulate(model, start="2024-01-01", freq="10m", n_steps=10_000, seed=42,
-                    n_paths=100, return_hidden=True)
-log_returns, hidden = paths[0]       # hidden["drift.mu"] is the true drift
+log_returns, hidden = fm.simulate(model, start="2024-01-01", freq="10m", n_steps=10_000,
+                                  seed=42, return_hidden=True)
 prices = fm.to_prices(log_returns)   # 10_001 rows, from the start
+# hidden["drift.mu"] is the true drift
+
+paths = fm.simulate(model, start="2024-01-01", freq="10m", n_steps=10_000, seed=42,
+                    n_paths=100)     # a list of 100 log-return frames
 ```
 
-- `simulate` returns a list with one log-return DataFrame per path (or `(log_returns, hidden)`
-  pairs with `return_hidden=True`). Path `i` is drawn from child `i` of `SeedSequence(seed)`:
-  identical inputs and seed give identical output, and asking for more paths leaves the first
-  unchanged.
+- `simulate` returns one log-return DataFrame per path (or a `(log_returns, hidden)` pair with
+  `return_hidden=True`). With `n_paths=1`, the default, that single path is returned itself;
+  with more, a list of paths. `fm.simulate_on` and `fm.simulate_driven` behave the same.
+- Path `i` is drawn from child `i` of `SeedSequence(seed)`: identical inputs and seed give
+  identical output, and asking for more paths leaves the first unchanged, so
+  `fm.simulate(..., seed=s)` equals `fm.simulate(..., seed=s, n_paths=10)[0]`.
 - `freq` is an Almanac frequency (`1m`, `10m`, `1h`, `1d`) or any pandas offset. Give either
   `n_steps` or `end`.
 - Hidden state is on the full grid, start included (`n_steps + 1` rows): `hidden` at row
@@ -119,7 +124,7 @@ mom = fm.StochasticDrift(0.1, 0.05, 2.0, 0.3, asset="MOM")
 a = fm.LinearCombination([mkt, mom], weights=[1.2, 0.5], sigma=0.1, asset="A")
 b = fm.LinearCombination([mkt, spy], weights=[0.8, -0.3], sigma=0.2, asset="B")  # spy: data
 
-res = fm.simulate([a, b], seed=1, n_paths=10, return_hidden=True)[0]
+res = fm.simulate([a, b], seed=1, return_hidden=True)
 res.output                     # log returns, columns A and B
 res.sources["MKT"].output      # the market path both A and B loaded on
 res.sources["MOM"].hidden      # its true drift, on the full grid
@@ -136,8 +141,9 @@ fm.to_prices(res.output)       # prices from initial_price
   it), and the models are simulated on it, gaps included; `dt[t]` is the time since the
   previous row (the first row's comes from the data's recorded start, else the first gap is
   repeated). Do not pass `start`/`freq`/`n_steps` then. With models only, give them as usual.
-- **Result.** `fm.simulate(combination_or_list, ...)` returns one log-return frame per path,
-  with a column per combination. With `return_hidden=True`, each path is a `fm.PathResult`:
+- **Result.** `fm.simulate(combination_or_list, ...)` returns one log-return frame per path
+  (the path itself with `n_paths=1`, else a list), with a column per combination. With
+  `return_hidden=True`, each path is a `fm.PathResult`:
   `.output`, and `.sources[name]`, a `fm.SourceRealisation` with `.output` (the source's log
   returns, all of a model's assets) and `.hidden` (its hidden state); a nested combination's
   entry is its own `PathResult`.
@@ -156,7 +162,7 @@ model = fm.RegimeSwitching(
     [dict(weights=[1.0, 0.0], sigma=0.05), dict(weights=[0.0, 1.0], constant=0.5, sigma=0.2)],
     transition_matrix=[[0.98, 0.02], [0.05, 0.95]],
 )
-out, hidden = fm.simulate_driven(model, [r1, r2], seed=42, return_hidden=True)[0]
+out, hidden = fm.simulate_driven(model, [r1, r2], seed=42, return_hidden=True)
 prices = fm.to_prices(out, initial_price=100.0)    # no natural start price
 ```
 

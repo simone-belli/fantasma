@@ -11,6 +11,11 @@ from .output import hidden_frame, log_return_frame
 from .process import Process
 
 
+def one_or_list(results: list, n_paths: int):
+    """The single path itself when ``n_paths`` is 1, else the list of paths."""
+    return results[0] if n_paths == 1 else results
+
+
 def simulate_states(
     process: Process, grid: TimeGrid, seed: int, n_paths: int = 1, noise: Noise | None = None
 ) -> np.ndarray:
@@ -65,16 +70,17 @@ def simulate(
     return_hidden: bool = False,
     noise: Noise | None = None,
     days_per_year: float | None = None,
-) -> list[pd.DataFrame] | list[tuple[pd.DataFrame, pd.DataFrame]]:
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame] | list:
     """Simulate ``n_paths`` independent paths of ``process`` on a regular grid.
 
-    Returns a list with one DataFrame of **log returns** per path (index ``ts`` in UTC for
+    With ``n_paths=1`` (the default) the single path is returned itself; with more, a list
+    with one element per path. Each path is a DataFrame of **log returns** (index ``ts`` in UTC for
     intraday ``freq``, ``date`` for daily; one column per asset): ``n_steps`` rows, row t the
     return over the step ending at t. ``attrs`` record the start timestamp and starting
     prices, so ``fm.to_prices(frame)`` gives the price path (``n_steps + 1`` rows, start
     included); see :mod:`fantasma.transforms`.
 
-    With ``return_hidden``, each element is a ``(log_returns, hidden)`` pair, ``hidden`` holding
+    With ``return_hidden``, each path is a ``(log_returns, hidden)`` pair, ``hidden`` holding
     the ground-truth state on the full grid (``n_steps + 1`` rows, start included).
 
     ``freq`` is an Almanac frequency (``"1m"``, ``"10m"``, ``"1h"``, ``"1d"``) or any pandas
@@ -94,7 +100,7 @@ def simulate(
         and process
         and all(isinstance(p, LinearCombination) for p in process)
     ):
-        return simulate_combinations(
+        paths = simulate_combinations(
             process,
             seed=seed,
             n_paths=n_paths,
@@ -106,6 +112,7 @@ def simulate(
             n_steps=n_steps,
             end=end,
         )
+        return one_or_list(paths, n_paths)
     if start is None or freq is None:
         raise ValueError("give start and freq (and n_steps or end) to simulate a model")
     kwargs = {} if days_per_year is None else {"days_per_year": days_per_year}
@@ -124,9 +131,10 @@ def simulate_on(
     return_hidden: bool = False,
     noise: Noise | None = None,
 ):
-    """Like :func:`simulate`, on a prebuilt :class:`TimeGrid`."""
+    """Like :func:`simulate`, on a prebuilt :class:`TimeGrid` (the single path itself when
+    ``n_paths`` is 1, else a list)."""
     paths = simulate_states(process, grid, seed, n_paths, noise)
     frames = [log_return_frame(process, p, grid) for p in paths]
-    if not return_hidden:
-        return frames
-    return [(f, hidden_frame(process, p, grid)) for f, p in zip(frames, paths, strict=True)]
+    if return_hidden:
+        frames = [(f, hidden_frame(process, p, grid)) for f, p in zip(frames, paths, strict=True)]
+    return one_or_list(frames, n_paths)

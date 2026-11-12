@@ -19,8 +19,8 @@ def test_same_seed_same_output(process):
 
 
 def test_different_seeds_differ(process):
-    (a,) = fm.simulate(process, seed=1, **RUN)
-    (b,) = fm.simulate(process, seed=2, **RUN)
+    a = fm.simulate(process, seed=1, **RUN)
+    b = fm.simulate(process, seed=2, **RUN)
     assert not np.allclose(a.to_numpy(), b.to_numpy())
 
 
@@ -28,7 +28,7 @@ def test_paths_independent_and_stable(process):
     paths = fm.simulate(process, seed=3, n_paths=4, **RUN)
     assert not np.allclose(paths[0].to_numpy(), paths[1].to_numpy())
     # Asking for more paths leaves the first ones unchanged.
-    (first,) = fm.simulate(process, seed=3, n_paths=1, **RUN)
+    first = fm.simulate(process, seed=3, n_paths=1, **RUN)
     pd.testing.assert_frame_equal(first, paths[0])
 
 
@@ -55,7 +55,7 @@ def test_shape_index_and_names(name, process):
 
 
 def test_daily_index(process):
-    (log_returns,) = fm.simulate(
+    log_returns = fm.simulate(
         process, start="2024-01-01 15:30", freq="1d", end="2024-03-01", seed=0
     )
     assert log_returns.index.name == "date"
@@ -66,7 +66,7 @@ def test_daily_index(process):
 
 
 def test_finite_and_not_exploding(process):
-    ((log_returns, hidden),) = fm.simulate(
+    log_returns, hidden = fm.simulate(
         process, start="2024-01-01", freq="1d", n_steps=3650, seed=11, return_hidden=True
     )
     prices = fm.to_prices(log_returns)
@@ -76,7 +76,7 @@ def test_finite_and_not_exploding(process):
 
 
 def test_long_format_matches_almanac(process):
-    (log_returns,) = fm.simulate(process, seed=0, **RUN)
+    log_returns = fm.simulate(process, seed=0, **RUN)
     with pytest.raises(ValueError, match="to_prices"):
         fm.to_long(log_returns)
     prices = fm.to_prices(log_returns)
@@ -138,3 +138,16 @@ def test_run_validation(kwargs):
 def test_seed_required():
     with pytest.raises(ValueError):
         fm.simulate(fm.RandomWalk(0.1), start="2024-01-01", freq="1d", n_steps=5, seed=None)
+
+
+def test_single_path_is_returned_itself():
+    one = fm.simulate(fm.RandomWalk(0.2), seed=3, **RUN)  # n_paths=1 is the default
+    assert isinstance(one, pd.DataFrame)
+    log_returns, hidden = fm.simulate(fm.RandomWalk(0.2), seed=3, return_hidden=True, **RUN)
+    assert isinstance(log_returns, pd.DataFrame) and isinstance(hidden, pd.DataFrame)
+    many = fm.simulate(fm.RandomWalk(0.2), seed=3, n_paths=2, **RUN)
+    assert isinstance(many, list) and len(many) == 2
+    pd.testing.assert_frame_equal(one, many[0])
+    grid = fm.RegularGrid(RUN["start"], RUN["freq"], n_steps=RUN["n_steps"])
+    pd.testing.assert_frame_equal(fm.simulate_on(fm.RandomWalk(0.2), grid, seed=3), one)
+    assert len(fm.simulate_on(fm.RandomWalk(0.2), grid, seed=3, n_paths=2)) == 2

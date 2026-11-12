@@ -33,6 +33,7 @@ import pandas as pd
 from .grid import DAYS_PER_YEAR
 from .noise import GaussianNoise, Noise
 from .regimes import MarkovChain
+from .simulate import one_or_list
 from .transforms import LOG_RETURN, QUANTITY, START, log_return_attrs, per_column
 
 
@@ -211,10 +212,11 @@ def simulate_driven(
     """Run a driven model (:class:`RegimeSwitching`) on log-return ``inputs`` for ``n_paths``
     independent noise and regime paths.
 
-    Returns a list with one DataFrame of log returns per path, with exactly the inputs' index
-    and columns. When every input records the same start timestamp, the output records it too;
+    With ``n_paths=1`` (the default) the single path is returned itself; with more, a list with
+    one element per path. Each path is a DataFrame of log returns, with exactly the inputs'
+    index and columns. When every input records the same start timestamp, the output records it too;
     it has no starting price, so give ``initial_price=`` to ``fm.to_prices``.
-    With ``return_hidden``, each element is ``(output, hidden)``, ``hidden`` holding the hidden
+    With ``return_hidden``, each path is ``(output, hidden)``, ``hidden`` holding the hidden
     state (e.g. ``regime``) on the same index. Path ``i`` uses child ``i`` of
     ``SeedSequence(seed)``, split into a regime stream and a noise stream, so the regimes do not
     depend on the noise type.
@@ -256,4 +258,4 @@ def simulate_driven(
             results.append((frame, pd.DataFrame(hidden, index=index, columns=hidden_columns)))
         else:
             results.append(frame)
-    return results
+    return one_or_list(results, n_paths)
