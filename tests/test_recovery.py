@@ -28,8 +28,8 @@ def daily(process, n_steps, seed, **kw):
 
 def test_random_walk_realised_vol():
     sigma, n = 0.2, 50_000
-    (prices,) = daily(fm.RandomWalk(sigma), n, seed=10)
-    r = np.diff(np.log(prices["ASSET"].to_numpy()))
+    (log_returns,) = daily(fm.RandomWalk(sigma), n, seed=10)
+    r = log_returns["ASSET"].to_numpy()
     sigma_hat = np.sqrt(np.mean(r**2) / DT)  # known zero mean
     se = sigma / np.sqrt(2 * n)
     assert abs(sigma_hat - sigma) < Z * se
@@ -37,8 +37,8 @@ def test_random_walk_realised_vol():
 
 def test_drift_plus_noise_drift_and_vol():
     mu, sigma, n = 0.1, 0.2, 73_000  # 200 years, so the drift is measurable
-    (prices,) = daily(fm.DriftPlusNoise(mu, sigma), n, seed=11)
-    r = np.diff(np.log(prices["ASSET"].to_numpy()))
+    (log_returns,) = daily(fm.DriftPlusNoise(mu, sigma), n, seed=11)
+    r = log_returns["ASSET"].to_numpy()
     mu_hat = r.mean() / DT
     sigma_hat = r.std(ddof=1) / np.sqrt(DT)
     assert abs(mu_hat - mu) < Z * sigma / np.sqrt(n * DT)
@@ -47,8 +47,8 @@ def test_drift_plus_noise_drift_and_vol():
 
 def test_ou_ar1_recovers_mean_and_half_life():
     theta, half_life, sigma, n = np.log(50.0), 0.1, 0.3, 50_000
-    (prices,) = daily(fm.OrnsteinUhlenbeck(theta, half_life, sigma, asset="OU"), n, seed=12)
-    x = np.log(prices["OU"].to_numpy())
+    (log_returns,) = daily(fm.OrnsteinUhlenbeck(theta, half_life, sigma, asset="OU"), n, seed=12)
+    x = fm.to_log_prices(log_returns)["OU"].to_numpy()
     fit = sm.OLS(x[1:], sm.add_constant(x[:-1])).fit()
     (a, b), cov = fit.params, fit.cov_params()
 
@@ -74,11 +74,10 @@ def test_cointegrated_rank_and_loadings():
     paths = daily(model, 20_000, seed=13, n_paths=n_paths)
 
     ratios, ranks = [], []
-    for prices in paths:
+    for log_returns in paths:
         # Measured from the start, the factors and spreads start at zero and have no drift, so
-        # the test takes no deterministic terms.
-        logp = np.log(prices.to_numpy())
-        logp -= logp[0]
+        # the test takes no deterministic terms: log prices relative to the start, from 1.0.
+        logp = fm.to_log_prices(log_returns, initial_price=1.0).to_numpy()
         # Johansen trace test at 5%: the rank is the first r not rejected; truth is N - K = 2.
         jo = coint_johansen(logp, det_order=-1, k_ar_diff=1)
         accepted = jo.lr1 < jo.cvt[:, 1]
@@ -119,8 +118,9 @@ def kalman_drift(r, dt, sigma, mean, half_life, drift_sigma, mu0):
 def test_stochastic_drift_kalman_tracks_hidden_drift():
     params = dict(sigma=0.1, drift_mean=0.05, drift_half_life=2.0, drift_sigma=0.3)
     model = fm.StochasticDrift(**params)
-    ((prices, hidden),) = daily(model, 40_000, seed=14, return_hidden=True)
-    r = np.diff(np.log(prices["ASSET"].to_numpy()))
+    ((log_returns, hidden),) = daily(model, 40_000, seed=14, return_hidden=True)
+    r = log_returns["ASSET"].to_numpy()
+    # Hidden state is on the full grid: return t is driven by the drift at the start of its step.
     true_mu = hidden["drift.mu"].to_numpy()[:-1]
     est, var = kalman_drift(
         r,
@@ -144,9 +144,9 @@ def test_stochastic_drift_kalman_tracks_hidden_drift():
 
 
 def driven_inputs(n_steps, seed):
-    """Two input frames, each two columns of random walks in log price."""
+    """Two log-return frames, each two columns of random walks."""
     model = fm.Composite({c: fm.RandomWalk(0.3, asset=c) for c in ("X", "Y")})
-    return [np.log(p) for p in daily(model, n_steps, seed=seed, n_paths=2)]
+    return daily(model, n_steps, seed=seed, n_paths=2)
 
 
 def test_linear_combination_ols_recovers_weights_constant_sigma():
@@ -157,7 +157,8 @@ def test_linear_combination_ols_recovers_weights_constant_sigma():
     for j, col in enumerate(out.columns):
         X = sm.add_constant(np.column_stack([x1[col], x2[col]]))
         fit = sm.OLS(out[col].to_numpy(), X).fit()
-        truth = np.array([constant[j], weights[0][j], weights[1][j]])
+        # The constant is an annualised drift: the intercept is constant * dt.
+        truth = np.array([constant[j] * DT, weights[0][j], weights[1][j]])
         assert np.all(np.abs(fit.params - truth) < Z * fit.bse)
         sigma_hat = np.sqrt(fit.mse_resid / DT)
         assert abs(sigma_hat - sigma[j]) < Z * sigma[j] / np.sqrt(2 * len(out))
@@ -187,7 +188,7 @@ def test_regime_switching_recovers_transitions_and_regime_parameters():
         rows = r == k
         X = sm.add_constant(np.column_stack([x1["X"][rows], x2["X"][rows]]))
         fit = sm.OLS(out["X"].to_numpy()[rows], X).fit()
-        truth = np.array([reg.constant, *reg.weights])
+        truth = np.array([reg.constant * DT, *reg.weights])
         assert np.all(np.abs(fit.params - truth) < Z * fit.bse)
         sigma_hat = np.sqrt(fit.mse_resid / DT)
         assert abs(sigma_hat - reg.sigma) < Z * reg.sigma / np.sqrt(2 * rows.sum())

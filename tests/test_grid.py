@@ -31,4 +31,4 @@ def test_days_per_year_override():
     grid = fm.RegularGrid("2024-01-01", "1d", n_steps=3, days_per_year=252)
     assert grid.dt == pytest.approx(1 / 252)
     (b,) = fm.simulate_on(fm.RandomWalk(0.2), grid, seed=0)
-    assert not np.allclose(a.to_numpy()[1:], b.to_numpy()[1:])
+    assert not np.allclose(a.to_numpy(), b.to_numpy())

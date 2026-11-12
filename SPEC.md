@@ -57,9 +57,11 @@ All prices are simulated in log space; prices are the exponential of log prices.
 
 ## 6. Output format
 
-- One pandas DataFrame per path, indexed by timestamp, one column per asset, containing close prices.
-- Column names and index conventions match the Almanac format.
-- Optional flag to return hidden state, as a separate DataFrame with the same index.
+- **Contract: every simulation produces log returns** (log price differences). One pandas DataFrame per path, indexed by timestamp, one column per asset; one row per step, labelled at the end of the step (the start instant is not a row). This holds for every model, driven models included (their inputs are log returns too).
+- Each frame records its start timestamp and starting log prices in `attrs`, so it can be turned back into the exact price path.
+- Helpers derive the other quantities: prices and log prices (with the start as a first row) and relative returns; a further helper turns real prices into log returns.
+- Column names and index conventions match the Almanac format; prices from the helpers are the wide form of Almanac's close prices.
+- Optional flag to return hidden state, as a separate DataFrame on the full grid (start included).
 - v1 is close prices only. The output layer is kept separate from the simulation so that OHLC bars and volume can be added later.
 
 ## 7. Reproducibility and multiple paths

@@ -21,12 +21,12 @@ def test_same_seed_same_output(process):
 def test_different_seeds_differ(process):
     (a,) = fm.simulate(process, seed=1, **RUN)
     (b,) = fm.simulate(process, seed=2, **RUN)
-    assert not np.allclose(a.to_numpy()[1:], b.to_numpy()[1:])
+    assert not np.allclose(a.to_numpy(), b.to_numpy())
 
 
 def test_paths_independent_and_stable(process):
     paths = fm.simulate(process, seed=3, n_paths=4, **RUN)
-    assert not np.allclose(paths[0].to_numpy()[1:], paths[1].to_numpy()[1:])
+    assert not np.allclose(paths[0].to_numpy(), paths[1].to_numpy())
     # Asking for more paths leaves the first ones unchanged.
     (first,) = fm.simulate(process, seed=3, n_paths=1, **RUN)
     pd.testing.assert_frame_equal(first, paths[0])
@@ -35,44 +35,59 @@ def test_paths_independent_and_stable(process):
 def test_shape_index_and_names(name, process):
     paths = fm.simulate(process, seed=0, n_paths=2, return_hidden=True, **RUN)
     assert len(paths) == 2
-    prices, hidden = paths[0]
-    assert prices.shape == (501, len(ASSETS[name]))
-    assert list(prices.columns) == ASSETS[name]
-    assert prices.columns.name == "symbol"
-    assert prices.index.name == "ts"
-    assert str(prices.index.dtype) == "datetime64[ns, UTC]"
-    assert prices.index[0] == pd.Timestamp("2024-01-01", tz="UTC")
-    assert (prices.index.to_series().diff().dropna() == pd.Timedelta(minutes=10)).all()
-    assert (prices.dtypes == "float64").all()
+    log_returns, hidden = paths[0]
+    start = pd.Timestamp("2024-01-01", tz="UTC")
+    # One row per step, labelled at the end of the step: the start is not a row.
+    assert log_returns.shape == (500, len(ASSETS[name]))
+    assert list(log_returns.columns) == ASSETS[name]
+    assert log_returns.columns.name == "symbol"
+    assert log_returns.index.name == "ts"
+    assert str(log_returns.index.dtype) == "datetime64[ns, UTC]"
+    assert log_returns.index[0] == start + pd.Timedelta(minutes=10)
+    assert (log_returns.index.to_series().diff().dropna() == pd.Timedelta(minutes=10)).all()
+    assert (log_returns.dtypes == "float64").all()
+    assert log_returns.attrs["quantity"] == "log_return"
+    assert log_returns.attrs["start"] == start
+    assert set(log_returns.attrs["initial_log_price"]) == set(ASSETS[name])
+    # Hidden state keeps the full grid, start included.
     assert list(hidden.columns) == HIDDEN[name]
-    assert hidden.index.equals(prices.index)
+    assert hidden.index[0] == start and hidden.index[1:].equals(log_returns.index)
 
 
 def test_daily_index(process):
-    (prices,) = fm.simulate(process, start="2024-01-01 15:30", freq="1d", end="2024-03-01", seed=0)
-    assert prices.index.name == "date"
-    assert str(prices.index.dtype) == "datetime64[ns]"
-    assert prices.index[0] == pd.Timestamp("2024-01-01")
-    assert prices.index[-1] == pd.Timestamp("2024-03-01")
+    (log_returns,) = fm.simulate(
+        process, start="2024-01-01 15:30", freq="1d", end="2024-03-01", seed=0
+    )
+    assert log_returns.index.name == "date"
+    assert str(log_returns.index.dtype) == "datetime64[ns]"
+    assert log_returns.attrs["start"] == pd.Timestamp("2024-01-01")
+    assert log_returns.index[0] == pd.Timestamp("2024-01-02")
+    assert log_returns.index[-1] == pd.Timestamp("2024-03-01")
 
 
 def test_finite_and_not_exploding(process):
-    ((prices, hidden),) = fm.simulate(
+    ((log_returns, hidden),) = fm.simulate(
         process, start="2024-01-01", freq="1d", n_steps=3650, seed=11, return_hidden=True
     )
-    assert np.isfinite(prices.to_numpy()).all() and np.isfinite(hidden.to_numpy()).all()
+    prices = fm.to_prices(log_returns)
+    assert np.isfinite(log_returns.to_numpy()).all() and np.isfinite(hidden.to_numpy()).all()
     assert (prices > 0).all().all()
     assert (prices.max() < 1e5).all() and (prices.min() > 1e-1).all()
 
 
 def test_long_format_matches_almanac(process):
-    (prices,) = fm.simulate(process, seed=0, **RUN)
+    (log_returns,) = fm.simulate(process, seed=0, **RUN)
+    with pytest.raises(ValueError, match="to_prices"):
+        fm.to_long(log_returns)
+    prices = fm.to_prices(log_returns)
     long = fm.to_long(prices)
     assert list(long.index.names) == ["ts", "symbol"]
     assert list(long.columns) == ["close", "source"]
     assert long.index.is_monotonic_increasing
     assert (long["source"] == "fantasma").all()
-    pd.testing.assert_frame_equal(long["close"].unstack("symbol"), prices, check_names=False)
+    pd.testing.assert_frame_equal(
+        long["close"].unstack("symbol"), prices, check_names=False, check_flags=False
+    )
 
 
 @pytest.mark.parametrize(

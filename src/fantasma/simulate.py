@@ -7,7 +7,7 @@ import pandas as pd
 
 from .grid import RegularGrid, TimeGrid
 from .noise import GaussianNoise, Noise
-from .output import hidden_frame, price_frame
+from .output import hidden_frame, log_return_frame
 from .process import Process
 
 
@@ -57,10 +57,14 @@ def simulate(
 ) -> list[pd.DataFrame] | list[tuple[pd.DataFrame, pd.DataFrame]]:
     """Simulate ``n_paths`` independent paths of ``process`` on a regular grid.
 
-    Returns a list with one wide close-price DataFrame per path (index ``ts`` in UTC for
-    intraday ``freq``, ``date`` for daily; one column per asset). With ``return_hidden``, each
-    element is a ``(prices, hidden)`` pair, ``hidden`` holding the ground-truth state on the
-    same index. Rows are the start plus one per step, so there are ``n_steps + 1``.
+    Returns a list with one DataFrame of **log returns** per path (index ``ts`` in UTC for
+    intraday ``freq``, ``date`` for daily; one column per asset): ``n_steps`` rows, row t the
+    return over the step ending at t. ``attrs`` record the start timestamp and starting
+    prices, so ``fm.to_prices(frame)`` gives the price path (``n_steps + 1`` rows, start
+    included); see :mod:`fantasma.transforms`.
+
+    With ``return_hidden``, each element is a ``(log_returns, hidden)`` pair, ``hidden`` holding
+    the ground-truth state on the full grid (``n_steps + 1`` rows, start included).
 
     ``freq`` is an Almanac frequency (``"1m"``, ``"10m"``, ``"1h"``, ``"1d"``) or any pandas
     offset. Give either ``n_steps`` or ``end``.
@@ -83,7 +87,7 @@ def simulate_on(
 ):
     """Like :func:`simulate`, on a prebuilt :class:`TimeGrid`."""
     paths = simulate_states(process, grid, seed, n_paths, noise)
-    prices = [price_frame(process, p, grid) for p in paths]
+    frames = [log_return_frame(process, p, grid) for p in paths]
     if not return_hidden:
-        return prices
-    return [(px, hidden_frame(process, p, grid)) for px, p in zip(prices, paths, strict=True)]
+        return frames
+    return [(f, hidden_frame(process, p, grid)) for f, p in zip(frames, paths, strict=True)]

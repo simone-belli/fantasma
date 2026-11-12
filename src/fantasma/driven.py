@@ -1,19 +1,23 @@
 """Models driven by given input series rather than by their own dynamics.
 
-A driven model takes a list of input DataFrames, all with the same index and columns (e.g.
-paths from other Fantasma models, or real data loaded from Almanac), and returns a series with
-that same index and columns. Run one with :func:`simulate_driven`.
+Like every Fantasma model, driven models work in **log returns** (see
+:mod:`fantasma.transforms`). A driven model takes a list of log-return DataFrames, all with the
+same index and columns (paths from other Fantasma models, or real prices converted with
+``fm.from_prices``), and returns log returns with that same index and columns. Run one with
+:func:`simulate_driven`.
 
-- :class:`LinearCombination`: ``Y[t] = c + sum_i w_i * X_i[t] + sigma * sqrt(dt[t]) * eps[t]``.
+- :class:`LinearCombination`, a factor model on log returns:
+  ``r[t] = c * dt[t] + sum_i w_i * r_i[t] + sigma * sqrt(dt[t]) * eps[t]``.
 - :class:`RegimeSwitching`: one ``LinearCombination`` per regime, the regime following a
   :class:`~fantasma.regimes.MarkovChain`.
 
-The combination is of the input values as given (prices, log prices, spreads...). ``eps`` comes
-from the ``Noise`` passed to :func:`simulate_driven` (standard Gaussian by default), and is
-independent across steps and columns: it does not accumulate, so ``Y`` stays tied to the inputs.
-``sigma`` is annualised; ``dt[t]`` is the time from the previous row to row ``t`` in years
-(for the first row, the time to the second), so uneven indexes, e.g. with weekend gaps, scale
-the noise by the time elapsed.
+``c`` is an annualised drift and ``sigma`` an annualised volatility. ``eps`` comes from the
+``Noise`` passed to :func:`simulate_driven` (standard Gaussian by default), independent across
+rows and columns. ``dt[t]`` is the time from the previous row to row ``t`` in years (for the
+first row, the time to the second), so uneven indexes, e.g. with weekend gaps, scale the drift
+and noise by the time elapsed.
+
+The output has no natural starting price, so ``fm.to_prices`` needs ``initial_price=`` for it.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ import pandas as pd
 from .grid import DAYS_PER_YEAR
 from .noise import GaussianNoise, Noise
 from .regimes import MarkovChain
+from .transforms import LOG_RETURN, QUANTITY, START, log_return_attrs, per_column
 
 
 class DrivenModel(ABC):
@@ -44,7 +49,7 @@ class DrivenModel(ABC):
         self,
         inputs: np.ndarray,
         columns: pd.Index,
-        sqrt_dt: np.ndarray,
+        dt: np.ndarray,
         rng_regime: np.random.Generator,
         rng_noise: np.random.Generator,
         noise: Noise,
@@ -53,32 +58,10 @@ class DrivenModel(ABC):
         from ``inputs`` of shape ``(n_inputs, n_rows, n_columns)``."""
 
 
-def _per_column(name: str, value, columns: pd.Index, non_negative: bool = False) -> np.ndarray:
-    """A scalar, a sequence with one value per column, or a Series keyed by column."""
-    n = len(columns)
-    if isinstance(value, pd.Series):
-        if set(value.index) != set(columns) or len(value) != n:
-            raise ValueError(f"{name}: Series index {list(value.index)} must be the columns")
-        value = value.reindex(columns).to_numpy()
-    try:
-        arr = np.asarray(value, dtype=float)
-    except (TypeError, ValueError):
-        raise ValueError(f"{name} must be numeric, got {value!r}") from None
-    if arr.ndim == 0:
-        arr = np.full(n, float(arr))
-    elif arr.shape != (n,):
-        raise ValueError(f"{name} must be a scalar or have one value per column ({n})")
-    if not np.all(np.isfinite(arr)):
-        raise ValueError(f"{name} must be finite")
-    if non_negative and np.any(arr < 0):
-        raise ValueError(f"{name} must be non-negative")
-    return arr
-
-
 def _check_scalar_or_vector(name: str, value, non_negative: bool = False):
     """Validate what can be checked before the columns are known."""
     if isinstance(value, pd.Series):
-        _per_column(name, value, value.index, non_negative)
+        per_column(name, value, value.index, non_negative)
         return value
     try:
         arr = np.asarray(value, dtype=float)
@@ -94,7 +77,10 @@ def _check_scalar_or_vector(name: str, value, non_negative: bool = False):
 
 
 class LinearCombination(DrivenModel):
-    """``Y[t] = constant + sum_i weights[i] * X_i[t] + sigma * sqrt(dt[t]) * eps[t]``.
+    """Factor model on log returns:
+    ``r[t] = constant * dt[t] + sum_i weights[i] * r_i[t] + sigma * sqrt(dt[t]) * eps[t]``.
+
+    ``constant`` is an annualised drift and ``sigma`` an annualised volatility.
 
     ``weights`` has one entry per input series; each entry, and ``constant`` and ``sigma``, is
     a scalar (same for every column), a sequence with one value per column, or a Series keyed
@@ -114,18 +100,19 @@ class LinearCombination(DrivenModel):
 
     def resolve(self, columns: pd.Index) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Weights ``(n_inputs, n_columns)``, constant and sigma ``(n_columns,)``."""
-        W = np.stack([_per_column(f"weights[{i}]", w, columns) for i, w in enumerate(self.weights)])
-        c = _per_column("constant", self.constant, columns)
-        s = _per_column("sigma", self.sigma, columns, non_negative=True)
+        W = np.stack([per_column(f"weights[{i}]", w, columns) for i, w in enumerate(self.weights)])
+        c = per_column("constant", self.constant, columns)
+        s = per_column("sigma", self.sigma, columns, non_negative=True)
         return W, c, s
 
-    def combine(self, inputs, columns, sqrt_dt, eps) -> np.ndarray:
+    def combine(self, inputs, columns, dt, eps) -> np.ndarray:
         W, c, s = self.resolve(columns)
-        return c + np.einsum("ic,itc->tc", W, inputs) + s * sqrt_dt[:, None] * eps
+        drift = c * dt[:, None]
+        return drift + np.einsum("ic,itc->tc", W, inputs) + s * np.sqrt(dt)[:, None] * eps
 
-    def generate(self, inputs, columns, sqrt_dt, rng_regime, rng_noise, noise):
+    def generate(self, inputs, columns, dt, rng_regime, rng_noise, noise):
         eps = noise.sample(rng_noise, inputs.shape[1], inputs.shape[2])
-        return self.combine(inputs, columns, sqrt_dt, eps), np.empty((inputs.shape[1], 0))
+        return self.combine(inputs, columns, dt, eps), np.empty((inputs.shape[1], 0))
 
     def __repr__(self) -> str:
         return (
@@ -165,11 +152,11 @@ class RegimeSwitching(DrivenModel):
     def n_inputs(self) -> int:
         return self.regimes[0].n_inputs
 
-    def generate(self, inputs, columns, sqrt_dt, rng_regime, rng_noise, noise):
+    def generate(self, inputs, columns, dt, rng_regime, rng_noise, noise):
         n_rows = inputs.shape[1]
         regime = self.chain.sample(rng_regime, n_rows)
         eps = noise.sample(rng_noise, n_rows, inputs.shape[2])
-        outputs = np.stack([r.combine(inputs, columns, sqrt_dt, eps) for r in self.regimes])
+        outputs = np.stack([r.combine(inputs, columns, dt, eps) for r in self.regimes])
         out = np.take_along_axis(outputs, regime[None, :, None], axis=0)[0]
         return out, regime[:, None]
 
@@ -188,6 +175,12 @@ def _check_inputs(inputs) -> tuple[pd.Index, pd.DatetimeIndex, np.ndarray]:
             raise ValueError(f"inputs[{i}] columns differ from inputs[0]")
         if not df.index.equals(first.index):
             raise ValueError(f"inputs[{i}] index differs from inputs[0]")
+        held = df.attrs.get(QUANTITY)
+        if held is not None and held != LOG_RETURN:
+            raise ValueError(
+                f"inputs[{i}] holds {held!r}; driven models take log returns "
+                "(convert prices with fm.from_prices)"
+            )
     if first.shape[1] == 0:
         raise ValueError("inputs have no columns")
     if not isinstance(first.index, pd.DatetimeIndex):
@@ -215,9 +208,12 @@ def simulate_driven(
     noise: Noise | None = None,
     days_per_year: float = DAYS_PER_YEAR,
 ) -> list[pd.DataFrame] | list[tuple[pd.DataFrame, pd.DataFrame]]:
-    """Run a driven model on ``inputs`` for ``n_paths`` independent noise and regime paths.
+    """Run a driven model on log-return ``inputs`` for ``n_paths`` independent noise and regime
+    paths.
 
-    Returns a list with one DataFrame per path, with exactly the inputs' index and columns.
+    Returns a list with one DataFrame of log returns per path, with exactly the inputs' index
+    and columns. When every input records the same start timestamp, the output records it too;
+    it has no starting price, so give ``initial_price=`` to ``fm.to_prices``.
     With ``return_hidden``, each element is ``(output, hidden)``, ``hidden`` holding the hidden
     state (e.g. ``regime``) on the same index. Path ``i`` uses child ``i`` of
     ``SeedSequence(seed)``, split into a regime stream and a noise stream, so the regimes do not
@@ -239,7 +235,8 @@ def simulate_driven(
     # Timedelta arithmetic, not asi8: the index may be in s/ms/us resolution, not ns.
     gaps = np.asarray((index[1:] - index[:-1]) / pd.Timedelta(days=days_per_year), dtype=float)
     dt = np.concatenate([gaps[:1], gaps])
-    sqrt_dt = np.sqrt(dt)
+    starts = {df.attrs.get(START) for df in inputs}
+    attrs = log_return_attrs(starts.pop() if len(starts) == 1 else None, None)
     hidden_columns = pd.Index(list(model.hidden_states), name="state", dtype="string")
 
     results = []
@@ -248,12 +245,13 @@ def simulate_driven(
         out, hidden = model.generate(
             values,
             columns,
-            sqrt_dt,
+            dt,
             np.random.default_rng(regime_seq),
             np.random.default_rng(noise_seq),
             model_noise,
         )
         frame = pd.DataFrame(out, index=index, columns=columns, dtype="float64")
+        frame.attrs.update(attrs)
         if return_hidden:
             results.append((frame, pd.DataFrame(hidden, index=index, columns=hidden_columns)))
         else:
