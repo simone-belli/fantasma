@@ -1,5 +1,7 @@
 # Fantasma
 
+*© 2026 Simone Belli. MIT License.*
+
 Synthetic price paths with known dynamics, for testing quantitative models on scenarios where
 the true data-generating process and its parameters are known. Output uses the
 [Almanac](https://github.com/simone-belli/almanac) index and column conventions, so synthetic
@@ -28,7 +30,7 @@ The level helpers take the start timestamp and starting prices from `attrs` by d
 `fm.to_prices(r)` rebuilds the model's exact price path, start included. Pass `initial_price=`
 (a scalar, one value per column, or a dict/Series keyed by column) or `start=` to override
 them, or when a frame does not carry them: pandas drops `attrs` after some operations, and
-`RegimeSwitching` output has no natural starting price. `fm.to_prices(fm.from_prices(p))` returns `p`.
+frames built outside Fantasma carry none. `fm.to_prices(fm.from_prices(p))` returns `p`.
 
 ## Install
 
@@ -92,14 +94,18 @@ labelled as log returns. The hidden-state frame has columns named `state`.
 
 ### Models (v1)
 
-All models evolve log prices; their output is the log returns.
+All models evolve log prices; their output is the log returns. Each names its output with
+`asset=` (`assets=` for `Cointegrated`) and starts at `initial_price=` (default 100;
+`initial_prices=` for `Cointegrated`; `OrnsteinUhlenbeck` starts at the log price `x0`, default
+`theta`). Models built from other models and data, `LinearCombination` and `RegimeSwitching`,
+follow below.
 
 | Class | Dynamics | Hidden state |
 | --- | --- | --- |
 | `Brownian(sigma, mu=0.0)` | `dlog p = mu dt + sigma dW`; `mu = 0` is the driftless random walk, the null case | — |
 | `OrnsteinUhlenbeck(theta, half_life, sigma, asset=...)` | `dx = kappa (theta - x) dt + sigma dW`, `kappa = ln 2 / half_life`, exact discretisation | — (or `x` when used without an asset) |
 | `Cointegrated(loadings, spread_half_lives, factor_sigmas, spread_sigmas, assets)` | `log p = log p0 + loadings @ f + s`; `f` random walks, `s` OU spreads | `factor_<k>`, `spread_<asset>` |
-| `StochasticDrift(sigma, drift_mean, drift_half_life, drift_sigma)` | drift plus noise whose drift is OU | `drift.mu` |
+| `StochasticDrift(sigma, drift_mean, drift_half_life, drift_sigma)` | `Brownian` whose drift `mu` is itself OU | `drift.mu` |
 
 ### Linear combinations
 
@@ -141,11 +147,11 @@ fm.to_prices(res.output)       # prices from initial_price
   previous row (the first row's comes from the data's recorded start, else the first gap is
   repeated). Do not pass `start`/`freq`/`n_steps` then. With models only, give them as usual.
 - **Result.** `fm.simulate(node_or_list, ...)` returns one log-return frame per path (the path
-  itself with `n_paths=1`, else a list), with a column per combination. With
+  itself with `n_paths=1`, else a list), with a column per node. With
   `return_hidden=True`, each path is a `fm.PathResult`:
   `.output`, and `.sources[name]`, a `fm.SourceRealisation` with `.output` (the source's log
-  returns, all of a model's assets) and `.hidden` (its hidden state); a nested combination's
-  entry is its own `PathResult`. `.regimes` holds regime paths (see below).
+  returns, all of a model's assets) and `.hidden` (its hidden state); a nested node's entry is
+  its own `PathResult`. `.regimes` holds regime paths (see below).
 - The output records `initial_price`, so `fm.to_prices` works directly.
 
 ### Regime switching
@@ -256,16 +262,23 @@ fm.Composite({"drift": drift, "price": price}, links={"price.mu": "drift.mu"})
 - Noise: subclass `fm.Noise` (`sample(rng, n_steps, n_shocks)`) and pass `noise=` for
   fat-tailed or GARCH shocks; processes are unchanged.
 - Time grid: subclass `fm.TimeGrid` (`index`, per-step `dts`) for sessions and overnight gaps,
-  and call `fm.simulate_on(process, grid, seed=...)`.
+  and call `fm.simulate_on(process, grid, seed=...)`. Two grids exist: `fm.RegularGrid`
+  (evenly spaced, from `start`/`freq`) and `fm.IndexGrid` (given timestamps, gaps included;
+  used when data sources set the grid).
 - Output: `fantasma.output` builds the log-return frames from simulated states, and
   `fantasma.transforms` holds the helpers; OHLC and volume go there.
 
 ## Tests
 
 ```bash
-pytest                    # basic checks for every model + parameter-recovery tests
-pytest -m "not recovery and not notebooks"  # basic checks only
+poetry run pytest                                       # everything
+poetry run pytest -m "not recovery and not notebooks"   # basic checks only (seconds)
+poetry run ruff check src tests && poetry run ruff format --check src tests   # lint, as CI
 ```
+
+Every model has the basic checks (reproducibility, shape and index, finite values, parameter
+validation); the helpers, combinations and regime switching have their own test files; every
+notebook is executed; `tests/test_version.py` guards the version and ownership metadata.
 
 Recovery tests compare estimates with the truth within 4 standard errors of the estimator's
 expected error (analytic, delta-method, or across seeded paths), not fixed thresholds.
@@ -277,6 +290,10 @@ from the installed package metadata. To release, change it there (or `poetry ver
 re-run `poetry install`. `tests/test_version.py` guards this: it fails if the installed version
 disagrees with `pyproject.toml`, or if a hardcoded `__version__` appears in the sources.
 
+## Author
+
+Fantasma is written and maintained by **Simone Belli**. Copyright © 2026 Simone Belli.
+
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Copyright (c) 2026 Simone Belli.

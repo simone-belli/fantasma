@@ -1,4 +1,7 @@
-"""Fantasma: synthetic price paths with known dynamics, in the Almanac data format."""
+"""Fantasma: synthetic price paths with known dynamics, in the Almanac data format.
+
+Copyright (c) 2026 Simone Belli. Released under the MIT License (see LICENSE).
+"""
 
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _version

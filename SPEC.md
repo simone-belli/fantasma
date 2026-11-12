@@ -1,5 +1,7 @@
 # Fantasma — Synthetic Price Simulation Framework
 
+*Author: Simone Belli. © 2026 Simone Belli. MIT License.*
+
 ## 1. Purpose
 
 Fantasma is a standalone, installable Python package that generates synthetic price data with known dynamics. Its purpose is to test quantitative models on controlled scenarios where the true data-generating process and its parameters are known, so that expected outcomes can be verified.
@@ -8,7 +10,7 @@ It is a separate project from Almanac (the market data library). The two share a
 
 ## 2. Design principles
 
-- **Plug and play:** importable by any project; output matches the Almanac data format exactly (asset naming, index conventions, column layout).
+- **Plug and play:** importable by any project; output follows the Almanac data format (asset naming, index conventions, column layout), so prices derived from it are interchangeable with Almanac's close prices.
 - **Extensible by design:** adding a new stochastic model means writing one class. The framework handles time grid, seeding, naming and output.
 - **Ground truth available:** hidden state variables (e.g. true drift, OU spread) can be returned alongside prices.
 - **Reproducible:** every run is fully determined by its seed.
@@ -41,9 +43,15 @@ All prices are simulated in log space; prices are the exponential of log prices.
 3. **Cointegrated system:** N assets driven by K common random-walk factors with loadings, plus stationary OU spreads around them. Parameters: loading matrix, spread half-lives, factor and spread volatilities. Hidden state includes the factors and spreads.
 4. **Stochastic mean-reverting drift (momentum-like):** a two-factor model where log price follows Brownian motion with drift, and the drift itself follows an OU process (mean, half-life, vol). Hidden state includes the true drift. This model is built through composition and serves as the reference test of the composition mechanism.
 
-### Possible later extensions (not v1)
+### Models built from sources
 
-- Regime switching between trending and mean-reverting.
+Two further models are built from **sources** rather than from their own state: a source is a one-asset model (simulated by the framework), one asset of a multi-asset model, a log-return data series, or another model of these two kinds, so they nest. The framework simulates the source models itself; within one path, each model object is simulated once and shared by every model that uses it. With data among the sources, the grid is the data's index.
+
+5. **Linear combination:** one series, `r = c·dt + Σ wᵢ·rᵢ + σ·√dt·ε`, from sources with weights, an annualised noise volatility `σ` and an optional annualised drift `c`.
+6. **Regime switching:** one series following one of N regime sources at a time, the regime following a Markov chain (N×N transition matrix, optional initial distribution, by default the stationary one). Every regime's source is simulated over the whole grid; the output takes the active regime's return. The regime path is returned as ground truth.
+
+### Possible later extensions
+
 - Fat-tailed or GARCH-type noise.
 - Arbitrary further stochastic models.
 
@@ -51,8 +59,9 @@ All prices are simulated in log space; prices are the exponential of log prices.
 
 - Internally the simulation runs in abstract time steps, with `dt` derived from the chosen frequency and parameters in annualised units.
 - The user supplies a start date and a frequency (e.g. 10-minute, daily) and the number of steps or an end date. The framework maps steps to a pandas DatetimeIndex.
-- v1 uses a continuous, regular grid: no trading sessions, holidays or overnight gaps.
-- The grid logic must be isolated so that session calendars and overnight gaps can be added later.
+- The default grid is continuous and regular: no trading sessions, holidays or overnight gaps.
+- When data sources are used, the grid is the data's own index, gaps included, with `dt` measured from each gap.
+- The grid logic is isolated so that session calendars and overnight gaps can be added later.
 
 ## 6. Output format
 
@@ -60,13 +69,13 @@ All prices are simulated in log space; prices are the exponential of log prices.
 - Each frame records its start timestamp and starting log prices in `attrs`, so it can be turned back into the exact price path.
 - Helpers derive the other quantities: prices and log prices (with the start as a first row) and relative returns; a further helper turns real prices into log returns.
 - Column names and index conventions match the Almanac format; prices from the helpers are the wide form of Almanac's close prices.
-- Optional flag to return hidden state, as a separate DataFrame on the full grid (start included).
+- Optional flag to return hidden state, as a separate DataFrame on the full grid (start included). For models built from sources, the flag returns a result object with the output, every source's realisation (its log returns and hidden state) and the regime paths.
 - v1 is close prices only. The output layer is kept separate from the simulation so that OHLC bars and volume can be added later.
 
 ## 7. Reproducibility and multiple paths
 
 - Every run takes a seed; identical inputs and seed give identical output.
-- The user can request N independent paths in one call. The result is a list of N DataFrames (one per path), with independent but reproducible random streams per path (e.g. NumPy SeedSequence spawning).
+- The user can request N independent paths in one call, with independent but reproducible random streams per path (NumPy SeedSequence spawning). The result is a list of N paths; with a single path (the default), the path itself is returned. Asking for more paths leaves the first ones unchanged.
 
 ## 8. Testing
 
@@ -85,10 +94,12 @@ Each model may optionally provide a recovery test: simulate long seeded paths wi
 - OU: AR(1) regression recovers mean and half-life.
 - Cointegrated system: Johansen or Engle–Granger finds the right number of cointegrating relations and recovers loadings.
 - Stochastic drift: a Kalman filter approximately tracks the hidden drift, compared against returned ground truth.
+- Linear combination: OLS of the output on its sources' returns recovers the weights, drift and noise volatility.
+- Regime switching: transition frequencies recover the transition matrix, and OLS within each regime recovers that regime's combination.
 
 ## 9. Out of scope for v1
 
 - Trading sessions, holidays and overnight gaps.
 - OHLC bars and volume.
-- Non-Gaussian noise and regime switching.
+- Non-Gaussian noise.
 - Direct integration into Almanac.

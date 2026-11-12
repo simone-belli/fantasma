@@ -1,8 +1,10 @@
 """The time grid: maps abstract simulation steps to timestamps and year fractions.
 
-v1 has one grid, :class:`RegularGrid`: evenly spaced, continuous time, no sessions, holidays or
-overnight gaps. The simulator only asks a grid for its ``index`` and the per-step ``dts``, so a
-session calendar with uneven steps can be added later as another ``TimeGrid``.
+Two grids exist. :class:`RegularGrid` is evenly spaced continuous time, with no sessions,
+holidays or overnight gaps. :class:`IndexGrid` runs on given timestamps, gaps included: it is
+the grid when data sources are among a model's sources. The simulator only asks a grid for its
+``index`` and the per-step ``dts``, so a session calendar can be added later as another
+``TimeGrid``.
 """
 
 from __future__ import annotations
