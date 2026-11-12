@@ -25,11 +25,22 @@ def simulate_states(
         raise ValueError(f"n_paths must be a positive integer, got {n_paths!r}")
     if seed is None:
         raise ValueError("a seed is required, so every run is reproducible")
+    children = np.random.SeedSequence(seed).spawn(n_paths)
+    return step_states(process, grid, children, noise)
+
+
+def step_states(
+    process: Process,
+    grid: TimeGrid,
+    children: list[np.random.SeedSequence],
+    noise: Noise | None = None,
+) -> np.ndarray:
+    """State paths ``(len(children), n_steps + 1, n_state)``, path ``i`` drawing its shocks
+    from ``children[i]``. All paths step together, vectorised."""
     noise = noise or GaussianNoise()
     dts = grid.dts
     n_steps = len(dts)
-
-    children = np.random.SeedSequence(seed).spawn(n_paths)
+    n_paths = len(children)
     shocks = np.stack(
         [noise.sample(np.random.default_rng(c), n_steps, process.n_shocks) for c in children],
         axis=1,
@@ -43,10 +54,10 @@ def simulate_states(
 
 
 def simulate(
-    process: Process,
+    process,
     *,
-    start,
-    freq,
+    start=None,
+    freq=None,
     seed: int,
     n_steps: int | None = None,
     end=None,
@@ -68,7 +79,35 @@ def simulate(
 
     ``freq`` is an Almanac frequency (``"1m"``, ``"10m"``, ``"1h"``, ``"1d"``) or any pandas
     offset. Give either ``n_steps`` or ``end``.
+
+    ``process`` may also be a :class:`~fantasma.combination.LinearCombination` or a list of
+    them: the result is then one log-return frame per path with a column per combination, or
+    with ``return_hidden`` a :class:`~fantasma.combination.PathResult` giving access to every
+    source's realisation. With data among the sources, the grid is the data's index and
+    ``start``/``freq``/``n_steps``/``end`` must not be given (see
+    :mod:`fantasma.combination`).
     """
+    from .combination import LinearCombination, simulate_combinations
+
+    if isinstance(process, LinearCombination) or (
+        isinstance(process, (list, tuple))
+        and process
+        and all(isinstance(p, LinearCombination) for p in process)
+    ):
+        return simulate_combinations(
+            process,
+            seed=seed,
+            n_paths=n_paths,
+            return_hidden=return_hidden,
+            noise=noise,
+            days_per_year=days_per_year,
+            start=start,
+            freq=freq,
+            n_steps=n_steps,
+            end=end,
+        )
+    if start is None or freq is None:
+        raise ValueError("give start and freq (and n_steps or end) to simulate a model")
     kwargs = {} if days_per_year is None else {"days_per_year": days_per_year}
     grid = RegularGrid(start, freq, n_steps=n_steps, end=end, **kwargs)
     return simulate_on(

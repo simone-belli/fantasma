@@ -3,9 +3,10 @@
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _version
 
+from .combination import LinearCombination, PathResult, SourceRealisation
 from .composite import Composite
-from .driven import DrivenModel, LinearCombination, RegimeSwitching, simulate_driven
-from .grid import RegularGrid, TimeGrid
+from .driven import DrivenModel, RegimeSwitching, simulate_driven
+from .grid import IndexGrid, RegularGrid, TimeGrid
 from .noise import GaussianNoise, Noise
 from .output import to_long
 from .process import Process
@@ -34,14 +35,17 @@ __all__ = [
     "DrivenModel",
     "DriftPlusNoise",
     "GaussianNoise",
+    "IndexGrid",
     "LinearCombination",
     "MarkovChain",
     "Noise",
     "OrnsteinUhlenbeck",
+    "PathResult",
     "Process",
     "RandomWalk",
     "RegimeSwitching",
     "RegularGrid",
+    "SourceRealisation",
     "StochasticDrift",
     "TimeGrid",
     "from_prices",

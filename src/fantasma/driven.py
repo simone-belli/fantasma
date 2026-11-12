@@ -6,10 +6,12 @@ same index and columns (paths from other Fantasma models, or real prices convert
 ``fm.from_prices``), and returns log returns with that same index and columns. Run one with
 :func:`simulate_driven`.
 
-- :class:`LinearCombination`, a factor model on log returns:
-  ``r[t] = c * dt[t] + sum_i w_i * r_i[t] + sigma * sqrt(dt[t]) * eps[t]``.
-- :class:`RegimeSwitching`: one ``LinearCombination`` per regime, the regime following a
-  :class:`~fantasma.regimes.MarkovChain`.
+- :class:`RegimeSwitching`: a factor model on log returns,
+  ``r[t] = c * dt[t] + sum_i w_i * r_i[t] + sigma * sqrt(dt[t]) * eps[t]``, whose ``w``, ``c``
+  and ``sigma`` depend on a regime following a :class:`~fantasma.regimes.MarkovChain`.
+
+For a single combination that also simulates its own sources, see
+:class:`fantasma.LinearCombination`.
 
 ``c`` is an annualised drift and ``sigma`` an annualised volatility. ``eps`` comes from the
 ``Noise`` passed to :func:`simulate_driven` (standard Gaussian by default), independent across
@@ -76,16 +78,9 @@ def _check_scalar_or_vector(name: str, value, non_negative: bool = False):
     return value
 
 
-class LinearCombination(DrivenModel):
-    """Factor model on log returns:
-    ``r[t] = constant * dt[t] + sum_i weights[i] * r_i[t] + sigma * sqrt(dt[t]) * eps[t]``.
-
-    ``constant`` is an annualised drift and ``sigma`` an annualised volatility.
-
-    ``weights`` has one entry per input series; each entry, and ``constant`` and ``sigma``, is
-    a scalar (same for every column), a sequence with one value per column, or a Series keyed
-    by column name. ``sigma`` is annualised. NaN in an input gives NaN in the output there.
-    """
+class _Loadings:
+    """One regime's parameters: ``weights`` (one entry per input), ``constant`` and ``sigma``,
+    each a scalar, one value per column, or a Series keyed by column."""
 
     def __init__(self, weights: Sequence, constant=0.0, sigma=0.0):
         if isinstance(weights, (str, bytes)) or not isinstance(weights, Sequence) or not weights:
@@ -110,37 +105,42 @@ class LinearCombination(DrivenModel):
         drift = c * dt[:, None]
         return drift + np.einsum("ic,itc->tc", W, inputs) + s * np.sqrt(dt)[:, None] * eps
 
-    def generate(self, inputs, columns, dt, rng_regime, rng_noise, noise):
-        eps = noise.sample(rng_noise, inputs.shape[1], inputs.shape[2])
-        return self.combine(inputs, columns, dt, eps), np.empty((inputs.shape[1], 0))
-
     def __repr__(self) -> str:
-        return (
-            f"LinearCombination(weights={self.weights!r}, constant={self.constant!r}, "
-            f"sigma={self.sigma!r})"
-        )
+        return f"dict(weights={self.weights!r}, constant={self.constant!r}, sigma={self.sigma!r})"
 
 
 class RegimeSwitching(DrivenModel):
-    """A linear combination whose weights, constant and sigma depend on a Markov regime.
+    """A factor model on given log returns whose parameters depend on a Markov regime.
 
-    ``regimes`` holds one :class:`LinearCombination` per regime (all over the same number of
-    inputs); ``transition_matrix`` and ``initial`` define the :class:`MarkovChain`, which moves
-    once per row and is shared by all columns. The regime path is returned as hidden state
-    ``regime``. The noise ``eps`` is drawn once and scaled by the current regime's sigma.
+    ``regimes`` holds one dict per regime, ``dict(weights=[...], constant=0.0, sigma=0.0)``:
+    ``weights`` has one entry per input series, and each weight, ``constant`` (annualised
+    drift) and ``sigma`` (annualised volatility) is a scalar, one value per column, or a Series
+    keyed by column. Every regime combines the same number of inputs. ``transition_matrix``
+    and ``initial`` define the :class:`MarkovChain`, which moves once per row and is shared by
+    all columns. The regime path is returned as hidden state ``regime``. The noise ``eps`` is
+    drawn once and scaled by the current regime's sigma. Run it with :func:`simulate_driven`.
     """
 
     hidden_states = ("regime",)
 
-    def __init__(self, regimes: Sequence[LinearCombination], transition_matrix, initial=None):
-        if isinstance(regimes, LinearCombination) or not regimes:
-            raise ValueError("regimes must be a non-empty list of LinearCombination")
+    def __init__(self, regimes: Sequence[dict], transition_matrix, initial=None):
+        if isinstance(regimes, dict) or not isinstance(regimes, Sequence) or not regimes:
+            raise ValueError("regimes must be a non-empty list of dicts, one per regime")
+        loadings = []
         for i, r in enumerate(regimes):
-            if not isinstance(r, LinearCombination):
-                raise TypeError(f"regimes[{i}] is not a LinearCombination: {r!r}")
-        if len({r.n_inputs for r in regimes}) != 1:
+            if not isinstance(r, dict):
+                raise TypeError(
+                    f"regimes[{i}] must be a dict(weights=..., constant=..., sigma=...)"
+                )
+            unknown = set(r) - {"weights", "constant", "sigma"}
+            if unknown or "weights" not in r:
+                raise ValueError(
+                    f"regimes[{i}] takes weights (required), constant and sigma; got {sorted(r)}"
+                )
+            loadings.append(_Loadings(**r))
+        if len({r.n_inputs for r in loadings}) != 1:
             raise ValueError("every regime must combine the same number of input series")
-        self.regimes = list(regimes)
+        self.regimes = loadings
         self.chain = MarkovChain(transition_matrix, initial)
         if self.chain.n_regimes != len(self.regimes):
             raise ValueError(
@@ -208,8 +208,8 @@ def simulate_driven(
     noise: Noise | None = None,
     days_per_year: float = DAYS_PER_YEAR,
 ) -> list[pd.DataFrame] | list[tuple[pd.DataFrame, pd.DataFrame]]:
-    """Run a driven model on log-return ``inputs`` for ``n_paths`` independent noise and regime
-    paths.
+    """Run a driven model (:class:`RegimeSwitching`) on log-return ``inputs`` for ``n_paths``
+    independent noise and regime paths.
 
     Returns a list with one DataFrame of log returns per path, with exactly the inputs' index
     and columns. When every input records the same start timestamp, the output records it too;

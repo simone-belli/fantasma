@@ -1,4 +1,8 @@
-"""Driven models: LinearCombination and RegimeSwitching on given log-return series."""
+"""Driven models: RegimeSwitching on given log-return series.
+
+A one-regime ``RegimeSwitching`` is a plain factor model on the inputs; ``lin`` builds one, as
+the baseline the regime tests compare against.
+"""
 
 import numpy as np
 import pandas as pd
@@ -19,18 +23,24 @@ def make_inputs(n_inputs=2, n_steps=200, freq="1d", seed=0):
     return paths
 
 
+def lin(weights, constant=0.0, sigma=0.0):
+    """A single-regime model: ``r = constant * dt + sum_i w_i r_i + sigma sqrt(dt) eps``."""
+    regime = dict(weights=weights, constant=constant, sigma=sigma)
+    return fm.RegimeSwitching([regime], transition_matrix=[[1.0]])
+
+
 def two_regimes(sigma=0.1):
     return fm.RegimeSwitching(
         [
-            fm.LinearCombination([1.0, 0.0], constant=0.0, sigma=sigma),
-            fm.LinearCombination([0.0, 1.0], constant=10.0, sigma=2 * sigma),
+            dict(weights=[1.0, 0.0], constant=0.0, sigma=sigma),
+            dict(weights=[0.0, 1.0], constant=10.0, sigma=2 * sigma),
         ],
         transition_matrix=[[0.9, 0.1], [0.2, 0.8]],
     )
 
 
 MODELS = {
-    "linear": lambda: fm.LinearCombination([0.5, [1.0, -1.0]], constant=1.0, sigma=0.2),
+    "linear": lambda: lin([0.5, [1.0, -1.0]], constant=1.0, sigma=0.2),
     "regime": two_regimes,
 }
 
@@ -62,7 +72,7 @@ def test_arbitrary_columns_and_index_preserved():
     idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-08"], name="when")
     cols = pd.Index(["a", "b", "c"], name="things")
     x = pd.DataFrame(np.arange(9.0).reshape(3, 3), index=idx, columns=cols)
-    (out,) = fm.simulate_driven(fm.LinearCombination([2.0], constant=0.0), [x], seed=0)
+    (out,) = fm.simulate_driven(lin([2.0], constant=0.0), [x], seed=0)
     pd.testing.assert_frame_equal(out, 2.0 * x, check_flags=False)
 
 
@@ -89,7 +99,7 @@ def test_different_seeds_and_paths_differ(model):
 
 def test_noise_free_combination_is_exact():
     x1, x2 = make_inputs()
-    model = fm.LinearCombination([0.5, [1.0, -2.0]], constant=[3.0, 4.0], sigma=0.0)
+    model = lin([0.5, [1.0, -2.0]], constant=[3.0, 4.0], sigma=0.0)
     (out,) = fm.simulate_driven(model, [x1, x2], seed=0)
     dt = 1 / 365.25  # the constant is an annualised drift
     expected = pd.DataFrame(
@@ -103,10 +113,10 @@ def test_noise_free_combination_is_exact():
 
 def test_series_parameters_are_matched_by_column():
     x1, x2 = make_inputs()
-    by_series = fm.LinearCombination(
+    by_series = lin(
         [pd.Series({"Y": 2.0, "X": 1.0}), 0.0], constant=pd.Series({"Y": 0.0, "X": 5.0})
     )
-    by_list = fm.LinearCombination([[1.0, 2.0], 0.0], constant=[5.0, 0.0])
+    by_list = lin([[1.0, 2.0], 0.0], constant=[5.0, 0.0])
     pd.testing.assert_frame_equal(
         fm.simulate_driven(by_series, [x1, x2], seed=0)[0],
         fm.simulate_driven(by_list, [x1, x2], seed=0)[0],
@@ -115,7 +125,7 @@ def test_series_parameters_are_matched_by_column():
 
 def test_noise_scales_with_sqrt_dt_and_sigma():
     x1, x2 = make_inputs(n_steps=20_000)
-    model = fm.LinearCombination([1.0, 0.0], sigma=[0.1, 0.4])
+    model = lin([1.0, 0.0], sigma=[0.1, 0.4])
     (out,) = fm.simulate_driven(model, [x1, x2], seed=3)
     resid = (out - x1).to_numpy()
     sd = resid.std(axis=0, ddof=0) / np.sqrt(1 / 365.25)
@@ -131,7 +141,7 @@ def test_uneven_index_scales_noise_by_elapsed_time():
         def sample(self, rng, n_steps, n_shocks):
             return np.ones((n_steps, n_shocks))
 
-    (out,) = fm.simulate_driven(fm.LinearCombination([1.0], sigma=1.0), [x], seed=0, noise=Ones())
+    (out,) = fm.simulate_driven(lin([1.0], sigma=1.0), [x], seed=0, noise=Ones())
     days = np.array([1, 1, 4])  # the first row uses the first gap
     np.testing.assert_allclose(out["A"], np.sqrt(days / 365.25))
 
@@ -150,19 +160,20 @@ def test_custom_noise_is_used(model):
 def test_nan_inputs_propagate():
     x1, x2 = make_inputs()
     x1.iloc[10, 0] = np.nan
-    (out,) = fm.simulate_driven(fm.LinearCombination([1.0, 1.0], sigma=0.1), [x1, x2], seed=0)
+    (out,) = fm.simulate_driven(lin([1.0, 1.0], sigma=0.1), [x1, x2], seed=0)
     assert np.isnan(out.iloc[10, 0]) and out.drop(out.index[10]).notna().all().all()
 
 
 # --- regime switching -----------------------------------------------------------------------
 
 
-def test_single_regime_equals_linear_combination():
+def test_identical_regimes_equal_a_single_regime():
     inputs = make_inputs()
-    lin = fm.LinearCombination([0.5, 1.5], constant=1.0, sigma=0.3)
-    reg = fm.RegimeSwitching([lin], transition_matrix=[[1.0]])
+    params = dict(weights=[0.5, 1.5], constant=1.0, sigma=0.3)
+    two = fm.RegimeSwitching([params, params], transition_matrix=[[0.5, 0.5], [0.5, 0.5]])
     pd.testing.assert_frame_equal(
-        fm.simulate_driven(lin, inputs, seed=4)[0], fm.simulate_driven(reg, inputs, seed=4)[0]
+        fm.simulate_driven(lin(**params), inputs, seed=4)[0],
+        fm.simulate_driven(two, inputs, seed=4)[0],
     )
 
 
@@ -190,7 +201,7 @@ def test_regimes_do_not_depend_on_noise_type():
 
 def test_fixed_initial_regime_and_absorbing_state():
     model = fm.RegimeSwitching(
-        [fm.LinearCombination([1.0]), fm.LinearCombination([2.0])],
+        [dict(weights=[1.0]), dict(weights=[2.0])],
         transition_matrix=[[1.0, 0.0], [0.0, 1.0]],
         initial=1,
     )
@@ -215,13 +226,13 @@ def test_initial_distribution_default_is_stationary():
 @pytest.mark.parametrize(
     "make",
     [
-        lambda: fm.LinearCombination([]),
-        lambda: fm.LinearCombination(1.0),
-        lambda: fm.LinearCombination(["a"]),
-        lambda: fm.LinearCombination([float("nan")]),
-        lambda: fm.LinearCombination([[[1.0]]]),
-        lambda: fm.LinearCombination([1.0], sigma=-0.1),
-        lambda: fm.LinearCombination([1.0], constant=float("inf")),
+        lambda: lin([]),
+        lambda: lin(1.0),
+        lambda: lin(["a"]),
+        lambda: lin([float("nan")]),
+        lambda: lin([[[1.0]]]),
+        lambda: lin([1.0], sigma=-0.1),
+        lambda: lin([1.0], constant=float("inf")),
         lambda: fm.MarkovChain([[0.5, 0.4], [0.5, 0.5]]),  # row does not sum to 1
         lambda: fm.MarkovChain([[1.2, -0.2], [0.5, 0.5]]),  # negative probability
         lambda: fm.MarkovChain([[1.0, 0.0]]),  # not square
@@ -229,11 +240,15 @@ def test_initial_distribution_default_is_stationary():
         lambda: fm.MarkovChain([[0.5, 0.5], [0.5, 0.5]], initial=[0.3, 0.3]),
         lambda: fm.MarkovChain([[1.0, 0.0], [0.0, 1.0]]),  # no unique stationary distribution
         lambda: fm.RegimeSwitching([], [[1.0]]),
-        lambda: fm.RegimeSwitching([fm.LinearCombination([1.0])], [[0.5, 0.5], [0.5, 0.5]]),
+        lambda: fm.RegimeSwitching([dict(weights=[1.0])], [[0.5, 0.5], [0.5, 0.5]]),
         lambda: fm.RegimeSwitching(
-            [fm.LinearCombination([1.0]), fm.LinearCombination([1.0, 1.0])],
+            [dict(weights=[1.0]), dict(weights=[1.0, 1.0])],
             [[0.5, 0.5], [0.5, 0.5]],
         ),
+        lambda: fm.RegimeSwitching(dict(weights=[1.0]), [[1.0]]),  # a dict, not a list
+        lambda: fm.RegimeSwitching([[1.0]], [[1.0]]),  # a regime that is not a dict
+        lambda: fm.RegimeSwitching([dict(constant=1.0)], [[1.0]]),  # no weights
+        lambda: fm.RegimeSwitching([dict(weights=[1.0], beta=2.0)], [[1.0]]),  # unknown key
     ],
 )
 def test_parameter_validation(make):
@@ -250,18 +265,18 @@ def _shifted_index(x):
 @pytest.mark.parametrize(
     "build, model",
     [
-        (lambda x1, x2: [x1], fm.LinearCombination([1.0, 1.0])),  # wrong number of inputs
-        (lambda x1, x2: [], fm.LinearCombination([1.0])),
-        (lambda x1, x2: x1, fm.LinearCombination([1.0])),  # a frame, not a list
-        (lambda x1, x2: [x1, x2[["Y", "X"]]], fm.LinearCombination([1.0, 1.0])),  # columns
-        (lambda x1, x2: [x1, _shifted_index(x2)], fm.LinearCombination([1.0, 1.0])),
-        (lambda x1, x2: [x1.reset_index(drop=True)], fm.LinearCombination([1.0])),
-        (lambda x1, x2: [x1.iloc[:1]], fm.LinearCombination([1.0])),  # one row: no dt
-        (lambda x1, x2: [x1.iloc[::-1]], fm.LinearCombination([1.0])),  # decreasing index
-        (lambda x1, x2: [x1.assign(X="a")], fm.LinearCombination([1.0])),  # not numeric
-        (lambda x1, x2: [x1.replace(x1.iloc[0, 0], np.inf)], fm.LinearCombination([1.0])),
-        (lambda x1, x2: [x1], fm.LinearCombination([[1.0, 2.0, 3.0]])),  # 3 values, 2 columns
-        (lambda x1, x2: [x1], fm.LinearCombination([pd.Series({"X": 1.0, "Z": 1.0})])),
+        (lambda x1, x2: [x1], lin([1.0, 1.0])),  # wrong number of inputs
+        (lambda x1, x2: [], lin([1.0])),
+        (lambda x1, x2: x1, lin([1.0])),  # a frame, not a list
+        (lambda x1, x2: [x1, x2[["Y", "X"]]], lin([1.0, 1.0])),  # columns
+        (lambda x1, x2: [x1, _shifted_index(x2)], lin([1.0, 1.0])),
+        (lambda x1, x2: [x1.reset_index(drop=True)], lin([1.0])),
+        (lambda x1, x2: [x1.iloc[:1]], lin([1.0])),  # one row: no dt
+        (lambda x1, x2: [x1.iloc[::-1]], lin([1.0])),  # decreasing index
+        (lambda x1, x2: [x1.assign(X="a")], lin([1.0])),  # not numeric
+        (lambda x1, x2: [x1.replace(x1.iloc[0, 0], np.inf)], lin([1.0])),
+        (lambda x1, x2: [x1], lin([[1.0, 2.0, 3.0]])),  # 3 values, 2 columns
+        (lambda x1, x2: [x1], lin([pd.Series({"X": 1.0, "Z": 1.0})])),
     ],
 )
 def test_input_validation(build, model):
@@ -272,7 +287,7 @@ def test_input_validation(build, model):
 
 def test_run_validation():
     inputs = make_inputs()
-    m = fm.LinearCombination([1.0, 1.0])
+    m = lin([1.0, 1.0])
     with pytest.raises(ValueError):
         fm.simulate_driven(m, inputs, seed=None)
     with pytest.raises(ValueError):
@@ -287,7 +302,7 @@ def test_run_validation():
 def test_uneven_index_scales_drift_by_elapsed_time():
     idx = pd.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-06"])
     x = pd.DataFrame({"A": [0.0, 0.0, 0.0]}, index=idx)
-    (out,) = fm.simulate_driven(fm.LinearCombination([1.0], constant=2.0), [x], seed=0)
+    (out,) = fm.simulate_driven(lin([1.0], constant=2.0), [x], seed=0)
     days = np.array([1, 1, 4])  # the first row uses the first gap
     np.testing.assert_allclose(out["A"], 2.0 * days / 365.25)
 
@@ -309,14 +324,14 @@ def test_start_dropped_when_inputs_disagree():
     a, _ = make_inputs()
     b = a.copy()
     b.attrs["start"] = pd.Timestamp("2023-12-31")
-    (out,) = fm.simulate_driven(fm.LinearCombination([1.0, 1.0]), [a, b], seed=0)
+    (out,) = fm.simulate_driven(lin([1.0, 1.0]), [a, b], seed=0)
     assert "start" not in out.attrs
 
 
 def test_prices_are_refused_as_inputs():
     prices = [fm.to_prices(x) for x in make_inputs()]
     with pytest.raises(ValueError, match="from_prices"):
-        fm.simulate_driven(fm.LinearCombination([1.0, 1.0]), prices, seed=0)
+        fm.simulate_driven(lin([1.0, 1.0]), prices, seed=0)
     # Converted back to log returns they are accepted.
     inputs = [fm.from_prices(p) for p in prices]
-    fm.simulate_driven(fm.LinearCombination([1.0, 1.0]), inputs, seed=0)
+    fm.simulate_driven(lin([1.0, 1.0]), inputs, seed=0)

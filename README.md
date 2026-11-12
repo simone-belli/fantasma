@@ -22,13 +22,13 @@ Helpers turn log returns into the other quantities:
 | `fm.to_prices(r, initial_price=None, start=None)` | `P[t] = P0 * exp(r[1] + ... + r[t])` | start + one per step |
 | `fm.to_log_prices(r, initial_price=None, start=None)` | `log P0 + r[1] + ... + r[t]` | start + one per step |
 | `fm.to_returns(r)` | relative returns `P[t] / P[t-1] - 1 = expm1(r[t])` | one per step |
-| `fm.from_prices(prices)` | log returns from prices, e.g. real data for driven models | one per step |
+| `fm.from_prices(prices)` | log returns from prices, e.g. real data as a combination source | one per step |
 
 The level helpers take the start timestamp and starting prices from `attrs` by default, so
 `fm.to_prices(r)` rebuilds the model's exact price path, start included. Pass `initial_price=`
 (a scalar, one value per column, or a dict/Series keyed by column) or `start=` to override
 them, or when a frame does not carry them: pandas drops `attrs` after some operations, and
-driven models have no natural starting price. `fm.to_prices(fm.from_prices(p))` returns `p`.
+`RegimeSwitching` output has no natural starting price. `fm.to_prices(fm.from_prices(p))` returns `p`.
 
 ## Install
 
@@ -97,52 +97,84 @@ All models evolve log prices; their output is the log returns.
 | `Cointegrated(loadings, spread_half_lives, factor_sigmas, spread_sigmas, assets)` | `log p = log p0 + loadings @ f + s`; `f` random walks, `s` OU spreads | `factor_<k>`, `spread_<asset>` |
 | `StochasticDrift(sigma, drift_mean, drift_half_life, drift_sigma)` | drift plus noise whose drift is OU | `drift.mu` |
 
-### Driven models
+### Linear combinations
 
-These combine input series you give them instead of evolving their own state. Like everything
-in Fantasma they work in log returns: `inputs` is a list of log-return DataFrames with
-identical index (a `DatetimeIndex`) and columns, such as paths from the models above, or real
-prices converted with `fm.from_prices` (e.g.
-`fm.from_prices(load(...)["close"].unstack("symbol"))`). Frames labelled as anything other
-than log returns are refused. The output is log returns with exactly the inputs' index and
-columns.
+`LinearCombination(sources, weights, sigma=0.0, *, asset, constant=0.0, initial_price=100.0)`
+builds one log-return series from **sources**:
 
-| Class | Output, column by column | Hidden state |
-| --- | --- | --- |
-| `LinearCombination(weights, constant=0, sigma=0)` | factor model: `r[t] = constant * dt[t] + sum_i weights[i] * r_i[t] + sigma * sqrt(dt[t]) * eps[t]` | — |
-| `RegimeSwitching(regimes, transition_matrix, initial=None)` | the `LinearCombination` of the current regime; the regime follows a Markov chain | `regime` |
+`r[t] = constant * dt[t] + sum_i weights[i] * r_i[t] + sigma * sqrt(dt[t]) * eps[t]`
+
+A source is any of:
+
+| Source | Name in `res.sources` |
+| --- | --- |
+| a one-asset model, e.g. `fm.RandomWalk(0.2, asset="MKT")`, simulated by Fantasma | its asset |
+| `(model, "X")`: asset `X` of a multi-asset model such as `Cointegrated` | `"X"` |
+| data: a log-return `Series` (named) or one-column `DataFrame`, e.g. real prices via `fm.from_prices` | its name / column |
+| another `LinearCombination`, so combinations nest | its `asset` |
 
 ```python
-lin = fm.LinearCombination([1.0, [0.5, -0.5]], constant=0.1, sigma=0.05)
-paths = fm.simulate_driven(lin, [r1, r2], seed=42, n_paths=10)   # r1, r2: log returns
-prices = fm.to_prices(paths[0], initial_price=100.0)              # no natural start price
+mkt = fm.RandomWalk(0.2, asset="MKT")
+mom = fm.StochasticDrift(0.1, 0.05, 2.0, 0.3, asset="MOM")
+a = fm.LinearCombination([mkt, mom], weights=[1.2, 0.5], sigma=0.1, asset="A")
+b = fm.LinearCombination([mkt, spy], weights=[0.8, -0.3], sigma=0.2, asset="B")  # spy: data
 
+res = fm.simulate([a, b], seed=1, n_paths=10, return_hidden=True)[0]
+res.output                     # log returns, columns A and B
+res.sources["MKT"].output      # the market path both A and B loaded on
+res.sources["MOM"].hidden      # its true drift, on the full grid
+fm.to_prices(res.output)       # prices from initial_price
+```
+
+- `weights` has one number per source; `sigma` (noise volatility) and `constant` (drift) are
+  annualised. `eps` comes from the `noise=` passed to `fm.simulate` (standard Gaussian by
+  default). Being returns, the noise accumulates in the output's price.
+- **Shared realisations.** Within a path, each model object is simulated once, however many
+  combinations use it, or however many of its assets are selected: `a` and `b` above see the
+  same market path. Equal but distinct model objects are independent.
+- **Grid.** With data among the sources, the grid is the data's index (all data must share
+  it), and the models are simulated on it, gaps included; `dt[t]` is the time since the
+  previous row (the first row's comes from the data's recorded start, else the first gap is
+  repeated). Do not pass `start`/`freq`/`n_steps` then. With models only, give them as usual.
+- **Result.** `fm.simulate(combination_or_list, ...)` returns one log-return frame per path,
+  with a column per combination. With `return_hidden=True`, each path is a `fm.PathResult`:
+  `.output`, and `.sources[name]`, a `fm.SourceRealisation` with `.output` (the source's log
+  returns, all of a model's assets) and `.hidden` (its hidden state); a nested combination's
+  entry is its own `PathResult`.
+- The output records `initial_price`, so `fm.to_prices` works directly.
+
+### Regime switching (data-driven)
+
+`RegimeSwitching(regimes, transition_matrix, initial=None)` is a factor model on log-return
+series you give it, whose parameters depend on a regime following a Markov chain. It runs with
+`fm.simulate_driven(model, inputs, seed=...)`, where `inputs` is a list of log-return
+DataFrames with identical index and columns; the output has exactly that index and those
+columns. (Unlike `LinearCombination`, it does not simulate its inputs itself.)
+
+```python
 model = fm.RegimeSwitching(
-    [fm.LinearCombination([1.0, 0.0], sigma=0.05), fm.LinearCombination([0.0, 1.0], sigma=0.2)],
+    [dict(weights=[1.0, 0.0], sigma=0.05), dict(weights=[0.0, 1.0], constant=0.5, sigma=0.2)],
     transition_matrix=[[0.98, 0.02], [0.05, 0.95]],
 )
 out, hidden = fm.simulate_driven(model, [r1, r2], seed=42, return_hidden=True)[0]
+prices = fm.to_prices(out, initial_price=100.0)    # no natural start price
 ```
 
-- `weights` has one entry per input series. Each weight, and `constant` and `sigma`, is a
-  scalar (every column), a list with one value per column, or a Series keyed by column.
-- `constant` is an annualised drift and `sigma` an annualised volatility. `eps` is independent
-  across rows and columns, from the `noise=` passed to `simulate_driven` (standard Gaussian by
-  default). Being returns, the noise accumulates in the output's price. `dt[t]` is the time
-  since the previous row, so uneven indexes (weekend gaps) scale drift and noise by elapsed
-  time. The first row uses the first gap.
-- The output records the inputs' start timestamp when they agree, but has no starting price:
-  give `initial_price=` to `fm.to_prices`.
-- NaN in an input gives NaN in the output at that row and column.
-- Regimes: `transition_matrix[i][j]` is the probability of moving from regime `i` to `j` per
-  row; one regime path is shared by all columns. `initial` is a regime, a probability per
-  regime, or `None` for the chain's stationary distribution. The regime path and the noise use
-  separate seeded streams, so changing the noise type leaves the regimes unchanged.
+- Each regime is `dict(weights=[...], constant=0.0, sigma=0.0)`: one weight per input series,
+  and each weight, `constant` (annualised drift) and `sigma` (annualised volatility) is a
+  scalar, one value per column, or a Series keyed by column.
+- `transition_matrix[i][j]` is the probability of moving from regime `i` to `j` per row; one
+  regime path is shared by all columns and returned as hidden state `regime`. `initial` is a
+  regime, a probability per regime, or `None` for the chain's stationary distribution. The
+  regime path and the noise use separate seeded streams.
+- `dt[t]` is the time since the previous row (the first row uses the first gap). NaN in an
+  input gives NaN in the output there. Inputs labelled as anything other than log returns are
+  refused.
 
 ## Notebooks
 
 `notebooks/` has one notebook per model. Each starts from a parameters cell (model parameters,
-seed, start, frequency, number of steps and paths; for driven models, the inputs too),
+seed, start, frequency, number of steps and paths; for combinations, the sources),
 simulates log returns, plots the prices (via `fm.to_prices`) and any hidden state, and runs a
 quick check of the result against the inputs. `01_random_walk.ipynb` shows all the helpers
 side by side.
