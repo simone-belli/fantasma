@@ -65,7 +65,7 @@ paths = fm.simulate(model, start="2024-01-01", freq="10m", n_steps=10_000, seed=
 
 - `simulate` returns one log-return DataFrame per path (or a `(log_returns, hidden)` pair with
   `return_hidden=True`). With `n_paths=1`, the default, that single path is returned itself;
-  with more, a list of paths. `fm.simulate_on` and `fm.simulate_driven` behave the same.
+  with more, a list of paths. `fm.simulate_on` behaves the same.
 - Path `i` is drawn from child `i` of `SeedSequence(seed)`: identical inputs and seed give
   identical output, and asking for more paths leaves the first unchanged, so
   `fm.simulate(..., seed=s)` equals `fm.simulate(..., seed=s, n_paths=10)[0]`.
@@ -116,7 +116,7 @@ A source is any of:
 | a one-asset model, e.g. `fm.RandomWalk(0.2, asset="MKT")`, simulated by Fantasma | its asset |
 | `(model, "X")`: asset `X` of a multi-asset model such as `Cointegrated` | `"X"` |
 | data: a log-return `Series` (named) or one-column `DataFrame`, e.g. real prices via `fm.from_prices` | its name / column |
-| another `LinearCombination`, so combinations nest | its `asset` |
+| another `LinearCombination` or a `RegimeSwitching`, so they nest | its `asset` |
 
 ```python
 mkt = fm.RandomWalk(0.2, asset="MKT")
@@ -141,41 +141,47 @@ fm.to_prices(res.output)       # prices from initial_price
   it), and the models are simulated on it, gaps included; `dt[t]` is the time since the
   previous row (the first row's comes from the data's recorded start, else the first gap is
   repeated). Do not pass `start`/`freq`/`n_steps` then. With models only, give them as usual.
-- **Result.** `fm.simulate(combination_or_list, ...)` returns one log-return frame per path
-  (the path itself with `n_paths=1`, else a list), with a column per combination. With
+- **Result.** `fm.simulate(node_or_list, ...)` returns one log-return frame per path (the path
+  itself with `n_paths=1`, else a list), with a column per combination. With
   `return_hidden=True`, each path is a `fm.PathResult`:
   `.output`, and `.sources[name]`, a `fm.SourceRealisation` with `.output` (the source's log
   returns, all of a model's assets) and `.hidden` (its hidden state); a nested combination's
-  entry is its own `PathResult`.
+  entry is its own `PathResult`. `.regimes` holds regime paths (see below).
 - The output records `initial_price`, so `fm.to_prices` works directly.
 
-### Regime switching (data-driven)
+### Regime switching
 
-`RegimeSwitching(regimes, transition_matrix, initial=None)` is a factor model on log-return
-series you give it, whose parameters depend on a regime following a Markov chain. It runs with
-`fm.simulate_driven(model, inputs, seed=...)`, where `inputs` is a list of log-return
-DataFrames with identical index and columns; the output has exactly that index and those
-columns. (Unlike `LinearCombination`, it does not simulate its inputs itself.)
+`RegimeSwitching(models, transition_matrix, initial=None, *, asset, initial_price=100.0)`
+follows one of N regimes at a time:
+
+`r[t] = r_k[t]` with `k = regime[t]`
 
 ```python
-model = fm.RegimeSwitching(
-    [dict(weights=[1.0, 0.0], sigma=0.05), dict(weights=[0.0, 1.0], constant=0.5, sigma=0.2)],
-    transition_matrix=[[0.98, 0.02], [0.05, 0.95]],
-)
-out, hidden = fm.simulate_driven(model, [r1, r2], seed=42, return_hidden=True)
-prices = fm.to_prices(out, initial_price=100.0)    # no natural start price
+calm = fm.LinearCombination([mkt], weights=[0.8], sigma=0.05, asset="CALM")
+wild = fm.LinearCombination([mkt, mom], weights=[1.5, 1.0], sigma=0.3, asset="WILD")
+stock = fm.RegimeSwitching([calm, wild], [[0.98, 0.02], [0.05, 0.95]], asset="STOCK")
+
+res = fm.simulate(stock, start="2024-01-01", freq="1d", n_steps=750, seed=1, return_hidden=True)
+res.output["STOCK"]       # the active regime's log return, row by row
+res.regimes["STOCK"]      # the regime path, 0..N-1
+res.sources["WILD"]       # each regime's own realisation
 ```
 
-- Each regime is `dict(weights=[...], constant=0.0, sigma=0.0)`: one weight per input series,
-  and each weight, `constant` (annualised drift) and `sigma` (annualised volatility) is a
-  scalar, one value per column, or a Series keyed by column.
-- `transition_matrix[i][j]` is the probability of moving from regime `i` to `j` per row; one
-  regime path is shared by all columns and returned as hidden state `regime`. `initial` is a
-  regime, a probability per regime, or `None` for the chain's stationary distribution. The
-  regime path and the noise use separate seeded streams.
-- `dt[t]` is the time since the previous row (the first row uses the first gap). NaN in an
-  input gives NaN in the output there. Inputs labelled as anything other than log returns are
-  refused.
+- `models`: the N regimes, each a source as for `LinearCombination` (a model,
+  `(model, "X")`, log-return data, or another `LinearCombination` / `RegimeSwitching`).
+  Names must be distinct.
+- `transition_matrix`: N×N, `transition_matrix[i][j]` the probability of moving from regime
+  `i` to `j` per row (rows sum to 1). `initial`: the first row's regime distribution (N
+  probabilities), a fixed regime index, or `None` for the chain's stationary distribution.
+- **Inactive regimes keep running.** Every regime's source is simulated over the whole grid,
+  and the output takes the active regime's return at each row. A level-dependent model (e.g.
+  OU) therefore reverts towards its own level, not the output's.
+- The regime moves once per output row. With `return_hidden=True`, `PathResult.regimes` holds
+  the regime path of every regime-switching node among the simulated ones (one column each,
+  indexed like `output`); a nested one's is in its own `PathResult`. The regime path and the
+  noise use separate seeded streams.
+- Everything else (sharing, grids, nesting, `initial_price`) works as for
+  `LinearCombination`, and the two nest in each other.
 
 ## Notebooks
 

@@ -3,9 +3,8 @@
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _version
 
-from .combination import LinearCombination, PathResult, SourceRealisation
+from .combination import LinearCombination, PathResult, RegimeSwitching, SourceRealisation
 from .composite import Composite
-from .driven import DrivenModel, RegimeSwitching, simulate_driven
 from .grid import IndexGrid, RegularGrid, TimeGrid
 from .noise import GaussianNoise, Noise
 from .output import to_long
@@ -32,7 +31,6 @@ except PackageNotFoundError:  # running from a source tree that was never instal
 __all__ = [
     "Cointegrated",
     "Composite",
-    "DrivenModel",
     "DriftPlusNoise",
     "GaussianNoise",
     "IndexGrid",
@@ -51,7 +49,6 @@ __all__ = [
     "from_prices",
     "half_life_to_kappa",
     "simulate",
-    "simulate_driven",
     "simulate_on",
     "simulate_states",
     "to_log_prices",

@@ -86,21 +86,21 @@ def simulate(
     ``freq`` is an Almanac frequency (``"1m"``, ``"10m"``, ``"1h"``, ``"1d"``) or any pandas
     offset. Give either ``n_steps`` or ``end``.
 
-    ``process`` may also be a :class:`~fantasma.combination.LinearCombination` or a list of
-    them: the result is then one log-return frame per path with a column per combination, or
-    with ``return_hidden`` a :class:`~fantasma.combination.PathResult` giving access to every
-    source's realisation. With data among the sources, the grid is the data's index and
+    ``process`` may also be a node built from sources, a
+    :class:`~fantasma.combination.LinearCombination` or a
+    :class:`~fantasma.combination.RegimeSwitching`, or a list of them: the result is then one
+    log-return frame per path with a column per node, or with ``return_hidden`` a
+    :class:`~fantasma.combination.PathResult` giving access to every source's realisation and
+    the regime paths. With data among the sources, the grid is the data's index and
     ``start``/``freq``/``n_steps``/``end`` must not be given (see
     :mod:`fantasma.combination`).
     """
-    from .combination import LinearCombination, simulate_combinations
+    from .combination import is_node, simulate_nodes
 
-    if isinstance(process, LinearCombination) or (
-        isinstance(process, (list, tuple))
-        and process
-        and all(isinstance(p, LinearCombination) for p in process)
+    if is_node(process) or (
+        isinstance(process, (list, tuple)) and process and all(is_node(p) for p in process)
     ):
-        paths = simulate_combinations(
+        paths = simulate_nodes(
             process,
             seed=seed,
             n_paths=n_paths,

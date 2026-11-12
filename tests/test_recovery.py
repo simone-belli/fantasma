@@ -143,12 +143,6 @@ def test_stochastic_drift_kalman_tracks_hidden_drift():
     assert abs(z2.mean() - 1) < Z * batches.std(ddof=1) / np.sqrt(len(batches))
 
 
-def driven_inputs(n_steps, seed):
-    """Two log-return frames, each two columns of random walks."""
-    model = fm.Composite({c: fm.RandomWalk(0.3, asset=c) for c in ("X", "Y")})
-    return daily(model, n_steps, seed=seed, n_paths=2)
-
-
 def test_linear_combination_ols_recovers_weights_constant_sigma():
     # Two outputs sharing one market source, plus their own second source.
     mkt = fm.RandomWalk(0.3, asset="MKT")
@@ -175,15 +169,17 @@ def test_linear_combination_ols_recovers_weights_constant_sigma():
 
 def test_regime_switching_recovers_transitions_and_regime_parameters():
     P = np.array([[0.95, 0.04, 0.01], [0.05, 0.9, 0.05], [0.02, 0.08, 0.9]])
+    x1, x2 = fm.RandomWalk(0.3, asset="X1"), fm.RandomWalk(0.3, asset="X2")
     regimes = [
-        dict(weights=[1.0, 0.0], constant=0.0, sigma=0.05),
-        dict(weights=[0.5, 0.5], constant=1.0, sigma=0.1),
-        dict(weights=[-1.0, 2.0], constant=-0.5, sigma=0.2),
+        fm.LinearCombination([x1, x2], [1.0, 0.0], sigma=0.05, asset="R0"),
+        fm.LinearCombination([x1, x2], [0.5, 0.5], sigma=0.1, asset="R1", constant=1.0),
+        fm.LinearCombination([x1, x2], [-1.0, 2.0], sigma=0.2, asset="R2", constant=-0.5),
     ]
-    x1, x2 = driven_inputs(30_000, seed=22)
-    model = fm.RegimeSwitching(regimes, transition_matrix=P)
-    out, hidden = fm.simulate_driven(model, [x1, x2], seed=23, return_hidden=True)
-    r = hidden["regime"].to_numpy()
+    model = fm.RegimeSwitching(regimes, transition_matrix=P, asset="Y")
+    res = fm.simulate(
+        model, start="2000-01-01", freq="1d", n_steps=30_000, seed=23, return_hidden=True
+    )
+    r = res.regimes["Y"].to_numpy()
 
     # Transition probabilities: counts from each regime are multinomial.
     counts = np.zeros((3, 3))
@@ -192,12 +188,14 @@ def test_regime_switching_recovers_transitions_and_regime_parameters():
     P_hat = counts / n_from
     assert np.all(np.abs(P_hat - P) < Z * np.sqrt(P * (1 - P) / n_from) + 1e-12)
 
-    # Given the true regimes, OLS within each regime recovers that regime's combination.
+    # Given the true regimes, OLS of the output on the shared sources, within each regime,
+    # recovers that regime's combination.
+    inputs = res.sources["R0"].sources
+    X_all = np.column_stack([inputs["X1"].output["X1"], inputs["X2"].output["X2"]])
     for k, reg in enumerate(regimes):
         rows = r == k
-        X = sm.add_constant(np.column_stack([x1["X"][rows], x2["X"][rows]]))
-        fit = sm.OLS(out["X"].to_numpy()[rows], X).fit()
-        truth = np.array([reg["constant"] * DT, *reg["weights"]])
+        fit = sm.OLS(res.output["Y"].to_numpy()[rows], sm.add_constant(X_all[rows])).fit()
+        truth = np.array([reg.constant * DT, *reg.weights])
         assert np.all(np.abs(fit.params - truth) < Z * fit.bse)
         sigma_hat = np.sqrt(fit.mse_resid / DT)
-        assert abs(sigma_hat - reg["sigma"]) < Z * reg["sigma"] / np.sqrt(2 * rows.sum())
+        assert abs(sigma_hat - reg.sigma) < Z * reg.sigma / np.sqrt(2 * rows.sum())

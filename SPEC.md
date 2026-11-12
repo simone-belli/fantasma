@@ -57,7 +57,7 @@ All prices are simulated in log space; prices are the exponential of log prices.
 
 ## 6. Output format
 
-- **Contract: every simulation produces log returns** (log price differences). One pandas DataFrame per path, indexed by timestamp, one column per asset; one row per step, labelled at the end of the step (the start instant is not a row). This holds for every model, linear combinations and driven models included (their data inputs are log returns too).
+- **Contract: every simulation produces log returns** (log price differences). One pandas DataFrame per path, indexed by timestamp, one column per asset; one row per step, labelled at the end of the step (the start instant is not a row). This holds for every model, linear combinations and regime switching included (their data sources are log returns too).
 - Each frame records its start timestamp and starting log prices in `attrs`, so it can be turned back into the exact price path.
 - Helpers derive the other quantities: prices and log prices (with the start as a first row) and relative returns; a further helper turns real prices into log returns.
 - Column names and index conventions match the Almanac format; prices from the helpers are the wide form of Almanac's close prices.
