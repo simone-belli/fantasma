@@ -1,4 +1,4 @@
-"""Driven models: LinearCombination and RegimeSwitching on given input series."""
+"""Driven models: LinearCombination and RegimeSwitching on given log-return series."""
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,7 @@ COLS = ["X", "Y"]
 
 
 def make_inputs(n_inputs=2, n_steps=200, freq="1d", seed=0):
-    """Input frames with identical index and columns: random walks per column."""
+    """Log-return frames with identical index and columns: random walks per column."""
     model = fm.Composite({c: fm.RandomWalk(0.2, asset=c) for c in COLS})
     paths = fm.simulate(
         model, start="2024-01-01", freq=freq, n_steps=n_steps, seed=seed, n_paths=n_inputs
@@ -62,8 +62,8 @@ def test_arbitrary_columns_and_index_preserved():
     idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-08"], name="when")
     cols = pd.Index(["a", "b", "c"], name="things")
     x = pd.DataFrame(np.arange(9.0).reshape(3, 3), index=idx, columns=cols)
-    (out,) = fm.simulate_driven(fm.LinearCombination([2.0], constant=1.0), [x], seed=0)
-    pd.testing.assert_frame_equal(out, 1.0 + 2.0 * x)
+    (out,) = fm.simulate_driven(fm.LinearCombination([2.0], constant=0.0), [x], seed=0)
+    pd.testing.assert_frame_equal(out, 2.0 * x, check_flags=False)
 
 
 def test_same_seed_same_output(model):
@@ -91,8 +91,12 @@ def test_noise_free_combination_is_exact():
     x1, x2 = make_inputs()
     model = fm.LinearCombination([0.5, [1.0, -2.0]], constant=[3.0, 4.0], sigma=0.0)
     (out,) = fm.simulate_driven(model, [x1, x2], seed=0)
+    dt = 1 / 365.25  # the constant is an annualised drift
     expected = pd.DataFrame(
-        {"X": 3.0 + 0.5 * x1["X"] + 1.0 * x2["X"], "Y": 4.0 + 0.5 * x1["Y"] - 2.0 * x2["Y"]}
+        {
+            "X": 3.0 * dt + 0.5 * x1["X"] + 1.0 * x2["X"],
+            "Y": 4.0 * dt + 0.5 * x1["Y"] - 2.0 * x2["Y"],
+        }
     )
     np.testing.assert_allclose(out.to_numpy(), expected.to_numpy())
 
@@ -169,7 +173,7 @@ def test_output_follows_the_regime():
     )
     regime = hidden["regime"].to_numpy()
     assert set(np.unique(regime)) == {0, 1}
-    expected = np.where(regime[:, None] == 0, x1.to_numpy(), 10.0 + x2.to_numpy())
+    expected = np.where(regime[:, None] == 0, x1.to_numpy(), 10.0 / 365.25 + x2.to_numpy())
     np.testing.assert_allclose(out.to_numpy(), expected)
 
 
@@ -275,3 +279,44 @@ def test_run_validation():
         fm.simulate_driven(m, inputs, seed=0, n_paths=0)
     with pytest.raises(TypeError):
         fm.simulate_driven(fm.RandomWalk(0.1), inputs, seed=0)
+
+
+# --- the log-return contract ------------------------------------------------------------------
+
+
+def test_uneven_index_scales_drift_by_elapsed_time():
+    idx = pd.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-06"])
+    x = pd.DataFrame({"A": [0.0, 0.0, 0.0]}, index=idx)
+    (out,) = fm.simulate_driven(fm.LinearCombination([1.0], constant=2.0), [x], seed=0)
+    days = np.array([1, 1, 4])  # the first row uses the first gap
+    np.testing.assert_allclose(out["A"], 2.0 * days / 365.25)
+
+
+def test_output_is_labelled_and_keeps_the_inputs_start(model):
+    inputs = make_inputs()
+    (out,) = fm.simulate_driven(model, inputs, seed=0)
+    assert out.attrs["quantity"] == "log_return"
+    assert out.attrs["start"] == inputs[0].attrs["start"]
+    assert "initial_log_price" not in out.attrs  # no natural starting price...
+    with pytest.raises(ValueError, match="initial_price"):
+        fm.to_prices(out)
+    prices = fm.to_prices(out, initial_price=100.0)  # ...so it is given here
+    assert prices.index[0] == inputs[0].attrs["start"]
+    np.testing.assert_allclose(prices.iloc[0], 100.0)
+
+
+def test_start_dropped_when_inputs_disagree():
+    a, _ = make_inputs()
+    b = a.copy()
+    b.attrs["start"] = pd.Timestamp("2023-12-31")
+    (out,) = fm.simulate_driven(fm.LinearCombination([1.0, 1.0]), [a, b], seed=0)
+    assert "start" not in out.attrs
+
+
+def test_prices_are_refused_as_inputs():
+    prices = [fm.to_prices(x) for x in make_inputs()]
+    with pytest.raises(ValueError, match="from_prices"):
+        fm.simulate_driven(fm.LinearCombination([1.0, 1.0]), prices, seed=0)
+    # Converted back to log returns they are accepted.
+    inputs = [fm.from_prices(p) for p in prices]
+    fm.simulate_driven(fm.LinearCombination([1.0, 1.0]), inputs, seed=0)

@@ -19,6 +19,7 @@ from .processes import (
 )
 from .regimes import MarkovChain
 from .simulate import simulate, simulate_on, simulate_states
+from .transforms import from_prices, to_log_prices, to_prices, to_returns
 
 # The version is defined once, in pyproject.toml, and read back from the installed metadata.
 # tests/test_version.py fails if the two disagree (e.g. a bump without `poetry install`).
@@ -43,10 +44,14 @@ __all__ = [
     "RegularGrid",
     "StochasticDrift",
     "TimeGrid",
+    "from_prices",
     "half_life_to_kappa",
     "simulate",
     "simulate_driven",
     "simulate_on",
     "simulate_states",
+    "to_log_prices",
     "to_long",
+    "to_prices",
+    "to_returns",
 ]
