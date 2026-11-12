@@ -1,5 +1,7 @@
 # Fantasma
 
+*© 2026 Simone Belli. MIT License.*
+
 Synthetic price paths with known dynamics, for testing quantitative models on scenarios where
 the true data-generating process and its parameters are known. Output uses the
 [Almanac](https://github.com/simone-belli/almanac) index and column conventions, so synthetic
@@ -22,13 +24,13 @@ Helpers turn log returns into the other quantities:
 | `fm.to_prices(r, initial_price=None, start=None)` | `P[t] = P0 * exp(r[1] + ... + r[t])` | start + one per step |
 | `fm.to_log_prices(r, initial_price=None, start=None)` | `log P0 + r[1] + ... + r[t]` | start + one per step |
 | `fm.to_returns(r)` | relative returns `P[t] / P[t-1] - 1 = expm1(r[t])` | one per step |
-| `fm.from_prices(prices)` | log returns from prices, e.g. real data for driven models | one per step |
+| `fm.from_prices(prices)` | log returns from prices, e.g. real data as a combination source | one per step |
 
 The level helpers take the start timestamp and starting prices from `attrs` by default, so
 `fm.to_prices(r)` rebuilds the model's exact price path, start included. Pass `initial_price=`
 (a scalar, one value per column, or a dict/Series keyed by column) or `start=` to override
 them, or when a frame does not carry them: pandas drops `attrs` after some operations, and
-driven models have no natural starting price. `fm.to_prices(fm.from_prices(p))` returns `p`.
+frames built outside Fantasma carry none. `fm.to_prices(fm.from_prices(p))` returns `p`.
 
 ## Install
 
@@ -54,16 +56,21 @@ import fantasma as fm
 
 model = fm.StochasticDrift(sigma=0.2, drift_mean=0.05, drift_half_life=0.5, drift_sigma=0.1,
                            asset="MOM")
-paths = fm.simulate(model, start="2024-01-01", freq="10m", n_steps=10_000, seed=42,
-                    n_paths=100, return_hidden=True)
-log_returns, hidden = paths[0]       # hidden["drift.mu"] is the true drift
+log_returns, hidden = fm.simulate(model, start="2024-01-01", freq="10m", n_steps=10_000,
+                                  seed=42, return_hidden=True)
 prices = fm.to_prices(log_returns)   # 10_001 rows, from the start
+# hidden["drift.mu"] is the true drift
+
+paths = fm.simulate(model, start="2024-01-01", freq="10m", n_steps=10_000, seed=42,
+                    n_paths=100)     # a list of 100 log-return frames
 ```
 
-- `simulate` returns a list with one log-return DataFrame per path (or `(log_returns, hidden)`
-  pairs with `return_hidden=True`). Path `i` is drawn from child `i` of `SeedSequence(seed)`:
-  identical inputs and seed give identical output, and asking for more paths leaves the first
-  unchanged.
+- `simulate` returns one log-return DataFrame per path (or a `(log_returns, hidden)` pair with
+  `return_hidden=True`). With `n_paths=1`, the default, that single path is returned itself;
+  with more, a list of paths. `fm.simulate_on` behaves the same.
+- Path `i` is drawn from child `i` of `SeedSequence(seed)`: identical inputs and seed give
+  identical output, and asking for more paths leaves the first unchanged, so
+  `fm.simulate(..., seed=s)` equals `fm.simulate(..., seed=s, n_paths=10)[0]`.
 - `freq` is an Almanac frequency (`1m`, `10m`, `1h`, `1d`) or any pandas offset. Give either
   `n_steps` or `end`.
 - Hidden state is on the full grid, start included (`n_steps + 1` rows): `hidden` at row
@@ -87,64 +94,106 @@ labelled as log returns. The hidden-state frame has columns named `state`.
 
 ### Models (v1)
 
-All models evolve log prices; their output is the log returns.
+All models evolve log prices; their output is the log returns. Each names its output with
+`asset=` (`assets=` for `Cointegrated`) and starts at `initial_price=` (default 100;
+`initial_prices=` for `Cointegrated`; `OrnsteinUhlenbeck` starts at the log price `x0`, default
+`theta`). Models built from other models and data, `LinearCombination` and `RegimeSwitching`,
+follow below.
 
 | Class | Dynamics | Hidden state |
 | --- | --- | --- |
-| `RandomWalk(sigma)` | `dlog p = sigma dW` | — |
-| `DriftPlusNoise(mu, sigma)` | `dlog p = mu dt + sigma dW` | — |
+| `Brownian(sigma, mu=0.0)` | `dlog p = mu dt + sigma dW`; `mu = 0` is the driftless random walk, the null case | — |
 | `OrnsteinUhlenbeck(theta, half_life, sigma, asset=...)` | `dx = kappa (theta - x) dt + sigma dW`, `kappa = ln 2 / half_life`, exact discretisation | — (or `x` when used without an asset) |
 | `Cointegrated(loadings, spread_half_lives, factor_sigmas, spread_sigmas, assets)` | `log p = log p0 + loadings @ f + s`; `f` random walks, `s` OU spreads | `factor_<k>`, `spread_<asset>` |
-| `StochasticDrift(sigma, drift_mean, drift_half_life, drift_sigma)` | drift plus noise whose drift is OU | `drift.mu` |
+| `StochasticDrift(sigma, drift_mean, drift_half_life, drift_sigma)` | `Brownian` whose drift `mu` is itself OU | `drift.mu` |
 
-### Driven models
+### Linear combinations
 
-These combine input series you give them instead of evolving their own state. Like everything
-in Fantasma they work in log returns: `inputs` is a list of log-return DataFrames with
-identical index (a `DatetimeIndex`) and columns, such as paths from the models above, or real
-prices converted with `fm.from_prices` (e.g.
-`fm.from_prices(load(...)["close"].unstack("symbol"))`). Frames labelled as anything other
-than log returns are refused. The output is log returns with exactly the inputs' index and
-columns.
+`LinearCombination(sources, weights, sigma=0.0, *, asset, constant=0.0, initial_price=100.0)`
+builds one log-return series from **sources**:
 
-| Class | Output, column by column | Hidden state |
-| --- | --- | --- |
-| `LinearCombination(weights, constant=0, sigma=0)` | factor model: `r[t] = constant * dt[t] + sum_i weights[i] * r_i[t] + sigma * sqrt(dt[t]) * eps[t]` | — |
-| `RegimeSwitching(regimes, transition_matrix, initial=None)` | the `LinearCombination` of the current regime; the regime follows a Markov chain | `regime` |
+`r[t] = constant * dt[t] + sum_i weights[i] * r_i[t] + sigma * sqrt(dt[t]) * eps[t]`
+
+A source is any of:
+
+| Source | Name in `res.sources` |
+| --- | --- |
+| a one-asset model, e.g. `fm.Brownian(0.2, asset="MKT")`, simulated by Fantasma | its asset |
+| `(model, "X")`: asset `X` of a multi-asset model such as `Cointegrated` | `"X"` |
+| data: a log-return `Series` (named) or one-column `DataFrame`, e.g. real prices via `fm.from_prices` | its name / column |
+| another `LinearCombination` or a `RegimeSwitching`, so they nest | its `asset` |
 
 ```python
-lin = fm.LinearCombination([1.0, [0.5, -0.5]], constant=0.1, sigma=0.05)
-paths = fm.simulate_driven(lin, [r1, r2], seed=42, n_paths=10)   # r1, r2: log returns
-prices = fm.to_prices(paths[0], initial_price=100.0)              # no natural start price
+mkt = fm.Brownian(0.2, asset="MKT")
+mom = fm.StochasticDrift(0.1, 0.05, 2.0, 0.3, asset="MOM")
+a = fm.LinearCombination([mkt, mom], weights=[1.2, 0.5], sigma=0.1, asset="A")
+b = fm.LinearCombination([mkt, spy], weights=[0.8, -0.3], sigma=0.2, asset="B")  # spy: data
 
-model = fm.RegimeSwitching(
-    [fm.LinearCombination([1.0, 0.0], sigma=0.05), fm.LinearCombination([0.0, 1.0], sigma=0.2)],
-    transition_matrix=[[0.98, 0.02], [0.05, 0.95]],
-)
-out, hidden = fm.simulate_driven(model, [r1, r2], seed=42, return_hidden=True)[0]
+res = fm.simulate([a, b], seed=1, return_hidden=True)
+res.output                     # log returns, columns A and B
+res.sources["MKT"].output      # the market path both A and B loaded on
+res.sources["MOM"].hidden      # its true drift, on the full grid
+fm.to_prices(res.output)       # prices from initial_price
 ```
 
-- `weights` has one entry per input series. Each weight, and `constant` and `sigma`, is a
-  scalar (every column), a list with one value per column, or a Series keyed by column.
-- `constant` is an annualised drift and `sigma` an annualised volatility. `eps` is independent
-  across rows and columns, from the `noise=` passed to `simulate_driven` (standard Gaussian by
-  default). Being returns, the noise accumulates in the output's price. `dt[t]` is the time
-  since the previous row, so uneven indexes (weekend gaps) scale drift and noise by elapsed
-  time. The first row uses the first gap.
-- The output records the inputs' start timestamp when they agree, but has no starting price:
-  give `initial_price=` to `fm.to_prices`.
-- NaN in an input gives NaN in the output at that row and column.
-- Regimes: `transition_matrix[i][j]` is the probability of moving from regime `i` to `j` per
-  row; one regime path is shared by all columns. `initial` is a regime, a probability per
-  regime, or `None` for the chain's stationary distribution. The regime path and the noise use
-  separate seeded streams, so changing the noise type leaves the regimes unchanged.
+- `weights` has one number per source; `sigma` (noise volatility) and `constant` (drift) are
+  annualised. `eps` comes from the `noise=` passed to `fm.simulate` (standard Gaussian by
+  default). Being returns, the noise accumulates in the output's price.
+- **Shared realisations.** Within a path, each model object is simulated once, however many
+  combinations use it, or however many of its assets are selected: `a` and `b` above see the
+  same market path. Equal but distinct model objects are independent.
+- **Grid.** With data among the sources, the grid is the data's index (all data must share
+  it), and the models are simulated on it, gaps included; `dt[t]` is the time since the
+  previous row (the first row's comes from the data's recorded start, else the first gap is
+  repeated). Do not pass `start`/`freq`/`n_steps` then. With models only, give them as usual.
+- **Result.** `fm.simulate(node_or_list, ...)` returns one log-return frame per path (the path
+  itself with `n_paths=1`, else a list), with a column per node. With
+  `return_hidden=True`, each path is a `fm.PathResult`:
+  `.output`, and `.sources[name]`, a `fm.SourceRealisation` with `.output` (the source's log
+  returns, all of a model's assets) and `.hidden` (its hidden state); a nested node's entry is
+  its own `PathResult`. `.regimes` holds regime paths (see below).
+- The output records `initial_price`, so `fm.to_prices` works directly.
+
+### Regime switching
+
+`RegimeSwitching(models, transition_matrix, initial=None, *, asset, initial_price=100.0)`
+follows one of N regimes at a time:
+
+`r[t] = r_k[t]` with `k = regime[t]`
+
+```python
+calm = fm.LinearCombination([mkt], weights=[0.8], sigma=0.05, asset="CALM")
+wild = fm.LinearCombination([mkt, mom], weights=[1.5, 1.0], sigma=0.3, asset="WILD")
+stock = fm.RegimeSwitching([calm, wild], [[0.98, 0.02], [0.05, 0.95]], asset="STOCK")
+
+res = fm.simulate(stock, start="2024-01-01", freq="1d", n_steps=750, seed=1, return_hidden=True)
+res.output["STOCK"]       # the active regime's log return, row by row
+res.regimes["STOCK"]      # the regime path, 0..N-1
+res.sources["WILD"]       # each regime's own realisation
+```
+
+- `models`: the N regimes, each a source as for `LinearCombination` (a model,
+  `(model, "X")`, log-return data, or another `LinearCombination` / `RegimeSwitching`).
+  Names must be distinct.
+- `transition_matrix`: N×N, `transition_matrix[i][j]` the probability of moving from regime
+  `i` to `j` per row (rows sum to 1). `initial`: the first row's regime distribution (N
+  probabilities), a fixed regime index, or `None` for the chain's stationary distribution.
+- **Inactive regimes keep running.** Every regime's source is simulated over the whole grid,
+  and the output takes the active regime's return at each row. A level-dependent model (e.g.
+  OU) therefore reverts towards its own level, not the output's.
+- The regime moves once per output row. With `return_hidden=True`, `PathResult.regimes` holds
+  the regime path of every regime-switching node among the simulated ones (one column each,
+  indexed like `output`); a nested one's is in its own `PathResult`. The regime path and the
+  noise use separate seeded streams.
+- Everything else (sharing, grids, nesting, `initial_price`) works as for
+  `LinearCombination`, and the two nest in each other.
 
 ## Notebooks
 
 `notebooks/` has one notebook per model. Each starts from a parameters cell (model parameters,
-seed, start, frequency, number of steps and paths; for driven models, the inputs too),
+seed, start, frequency, number of steps and paths; for combinations, the sources),
 simulates log returns, plots the prices (via `fm.to_prices`) and any hidden state, and runs a
-quick check of the result against the inputs. `01_random_walk.ipynb` shows all the helpers
+quick check of the result against the inputs. `01_brownian.ipynb` shows all the helpers
 side by side.
 
 ```bash
@@ -154,13 +203,12 @@ poetry run jupyter lab notebooks/
 
 | Notebook | Model |
 | --- | --- |
-| `01_random_walk.ipynb` | `RandomWalk` |
-| `02_drift_plus_noise.ipynb` | `DriftPlusNoise` |
-| `03_ornstein_uhlenbeck.ipynb` | `OrnsteinUhlenbeck` |
-| `04_cointegrated.ipynb` | `Cointegrated` |
-| `05_stochastic_drift.ipynb` | `StochasticDrift` |
-| `06_linear_combination.ipynb` | `LinearCombination` |
-| `07_regime_switching.ipynb` | `RegimeSwitching` |
+| `01_brownian.ipynb` | `Brownian` (with and without drift) |
+| `02_ornstein_uhlenbeck.ipynb` | `OrnsteinUhlenbeck` |
+| `03_cointegrated.ipynb` | `Cointegrated` |
+| `04_stochastic_drift.ipynb` | `StochasticDrift` |
+| `05_linear_combination.ipynb` | `LinearCombination` |
+| `06_regime_switching.ipynb` | `RegimeSwitching` |
 
 Notebooks are committed without outputs; the test suite executes each one.
 
@@ -205,7 +253,7 @@ of the step, so component order is irrelevant. Composites are processes, so they
 
 ```python
 drift = fm.OrnsteinUhlenbeck(0.05, 0.5, 0.1, state_name="mu")
-price = fm.DriftPlusNoise(0.05, 0.2, asset="MOM")
+price = fm.Brownian(0.2, mu=0.05, asset="MOM")
 fm.Composite({"drift": drift, "price": price}, links={"price.mu": "drift.mu"})
 ```
 
@@ -214,16 +262,23 @@ fm.Composite({"drift": drift, "price": price}, links={"price.mu": "drift.mu"})
 - Noise: subclass `fm.Noise` (`sample(rng, n_steps, n_shocks)`) and pass `noise=` for
   fat-tailed or GARCH shocks; processes are unchanged.
 - Time grid: subclass `fm.TimeGrid` (`index`, per-step `dts`) for sessions and overnight gaps,
-  and call `fm.simulate_on(process, grid, seed=...)`.
+  and call `fm.simulate_on(process, grid, seed=...)`. Two grids exist: `fm.RegularGrid`
+  (evenly spaced, from `start`/`freq`) and `fm.IndexGrid` (given timestamps, gaps included;
+  used when data sources set the grid).
 - Output: `fantasma.output` builds the log-return frames from simulated states, and
   `fantasma.transforms` holds the helpers; OHLC and volume go there.
 
 ## Tests
 
 ```bash
-pytest                    # basic checks for every model + parameter-recovery tests
-pytest -m "not recovery and not notebooks"  # basic checks only
+poetry run pytest                                       # everything
+poetry run pytest -m "not recovery and not notebooks"   # basic checks only (seconds)
+poetry run ruff check src tests && poetry run ruff format --check src tests   # lint, as CI
 ```
+
+Every model has the basic checks (reproducibility, shape and index, finite values, parameter
+validation); the helpers, combinations and regime switching have their own test files; every
+notebook is executed; `tests/test_version.py` guards the version and ownership metadata.
 
 Recovery tests compare estimates with the truth within 4 standard errors of the estimator's
 expected error (analytic, delta-method, or across seeded paths), not fixed thresholds.
@@ -235,6 +290,10 @@ from the installed package metadata. To release, change it there (or `poetry ver
 re-run `poetry install`. `tests/test_version.py` guards this: it fails if the installed version
 disagrees with `pyproject.toml`, or if a hardcoded `__version__` appears in the sources.
 
+## Author
+
+Fantasma is written and maintained by **Simone Belli**. Copyright © 2026 Simone Belli.
+
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). Copyright (c) 2026 Simone Belli.

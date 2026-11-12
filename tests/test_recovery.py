@@ -26,18 +26,18 @@ def daily(process, n_steps, seed, **kw):
     return fm.simulate(process, start="2000-01-01", freq="1d", n_steps=n_steps, seed=seed, **kw)
 
 
-def test_random_walk_realised_vol():
+def test_brownian_realised_vol():
     sigma, n = 0.2, 50_000
-    (log_returns,) = daily(fm.RandomWalk(sigma), n, seed=10)
+    log_returns = daily(fm.Brownian(sigma), n, seed=10)
     r = log_returns["ASSET"].to_numpy()
     sigma_hat = np.sqrt(np.mean(r**2) / DT)  # known zero mean
     se = sigma / np.sqrt(2 * n)
     assert abs(sigma_hat - sigma) < Z * se
 
 
-def test_drift_plus_noise_drift_and_vol():
+def test_brownian_drift_and_vol():
     mu, sigma, n = 0.1, 0.2, 73_000  # 200 years, so the drift is measurable
-    (log_returns,) = daily(fm.DriftPlusNoise(mu, sigma), n, seed=11)
+    log_returns = daily(fm.Brownian(sigma, mu=mu), n, seed=11)
     r = log_returns["ASSET"].to_numpy()
     mu_hat = r.mean() / DT
     sigma_hat = r.std(ddof=1) / np.sqrt(DT)
@@ -47,7 +47,7 @@ def test_drift_plus_noise_drift_and_vol():
 
 def test_ou_ar1_recovers_mean_and_half_life():
     theta, half_life, sigma, n = np.log(50.0), 0.1, 0.3, 50_000
-    (log_returns,) = daily(fm.OrnsteinUhlenbeck(theta, half_life, sigma, asset="OU"), n, seed=12)
+    log_returns = daily(fm.OrnsteinUhlenbeck(theta, half_life, sigma, asset="OU"), n, seed=12)
     x = fm.to_log_prices(log_returns)["OU"].to_numpy()
     fit = sm.OLS(x[1:], sm.add_constant(x[:-1])).fit()
     (a, b), cov = fit.params, fit.cov_params()
@@ -118,7 +118,7 @@ def kalman_drift(r, dt, sigma, mean, half_life, drift_sigma, mu0):
 def test_stochastic_drift_kalman_tracks_hidden_drift():
     params = dict(sigma=0.1, drift_mean=0.05, drift_half_life=2.0, drift_sigma=0.3)
     model = fm.StochasticDrift(**params)
-    ((log_returns, hidden),) = daily(model, 40_000, seed=14, return_hidden=True)
+    log_returns, hidden = daily(model, 40_000, seed=14, return_hidden=True)
     r = log_returns["ASSET"].to_numpy()
     # Hidden state is on the full grid: return t is driven by the drift at the start of its step.
     true_mu = hidden["drift.mu"].to_numpy()[:-1]
@@ -143,38 +143,43 @@ def test_stochastic_drift_kalman_tracks_hidden_drift():
     assert abs(z2.mean() - 1) < Z * batches.std(ddof=1) / np.sqrt(len(batches))
 
 
-def driven_inputs(n_steps, seed):
-    """Two log-return frames, each two columns of random walks."""
-    model = fm.Composite({c: fm.RandomWalk(0.3, asset=c) for c in ("X", "Y")})
-    return daily(model, n_steps, seed=seed, n_paths=2)
-
-
 def test_linear_combination_ols_recovers_weights_constant_sigma():
-    weights, constant, sigma = [[0.8, -0.5], [1.5, 0.3]], [0.2, -1.0], [0.05, 0.1]
-    x1, x2 = driven_inputs(20_000, seed=20)
-    model = fm.LinearCombination([weights[0], weights[1]], constant=constant, sigma=sigma)
-    (out,) = fm.simulate_driven(model, [x1, x2], seed=21)
-    for j, col in enumerate(out.columns):
-        X = sm.add_constant(np.column_stack([x1[col], x2[col]]))
-        fit = sm.OLS(out[col].to_numpy(), X).fit()
+    # Two outputs sharing one market source, plus their own second source.
+    mkt = fm.Brownian(0.3, asset="MKT")
+    mom = fm.StochasticDrift(0.2, 0.05, 1.0, 0.3, asset="MOM")
+    ou = fm.OrnsteinUhlenbeck(np.log(100), 0.2, 0.3, asset="OU")
+    combos = [
+        fm.LinearCombination([mkt, mom], weights=[0.8, -0.5], sigma=0.05, asset="A", constant=0.2),
+        fm.LinearCombination([mkt, ou], weights=[1.5, 0.3], sigma=0.1, asset="B", constant=-1.0),
+    ]
+    res = fm.simulate(
+        combos, start="2000-01-01", freq="1d", n_steps=20_000, seed=21, return_hidden=True
+    )
+    for combo in combos:
+        X = sm.add_constant(
+            np.column_stack([res.sources[s.name].output[s.name] for s in combo.sources])
+        )
+        fit = sm.OLS(res.output[combo.asset].to_numpy(), X).fit()
         # The constant is an annualised drift: the intercept is constant * dt.
-        truth = np.array([constant[j] * DT, weights[0][j], weights[1][j]])
+        truth = np.array([combo.constant * DT, *combo.weights])
         assert np.all(np.abs(fit.params - truth) < Z * fit.bse)
         sigma_hat = np.sqrt(fit.mse_resid / DT)
-        assert abs(sigma_hat - sigma[j]) < Z * sigma[j] / np.sqrt(2 * len(out))
+        assert abs(sigma_hat - combo.sigma) < Z * combo.sigma / np.sqrt(2 * len(res.output))
 
 
 def test_regime_switching_recovers_transitions_and_regime_parameters():
     P = np.array([[0.95, 0.04, 0.01], [0.05, 0.9, 0.05], [0.02, 0.08, 0.9]])
+    x1, x2 = fm.Brownian(0.3, asset="X1"), fm.Brownian(0.3, asset="X2")
     regimes = [
-        fm.LinearCombination([1.0, 0.0], constant=0.0, sigma=0.05),
-        fm.LinearCombination([0.5, 0.5], constant=1.0, sigma=0.1),
-        fm.LinearCombination([-1.0, 2.0], constant=-0.5, sigma=0.2),
+        fm.LinearCombination([x1, x2], [1.0, 0.0], sigma=0.05, asset="R0"),
+        fm.LinearCombination([x1, x2], [0.5, 0.5], sigma=0.1, asset="R1", constant=1.0),
+        fm.LinearCombination([x1, x2], [-1.0, 2.0], sigma=0.2, asset="R2", constant=-0.5),
     ]
-    x1, x2 = driven_inputs(30_000, seed=22)
-    model = fm.RegimeSwitching(regimes, transition_matrix=P)
-    ((out, hidden),) = fm.simulate_driven(model, [x1, x2], seed=23, return_hidden=True)
-    r = hidden["regime"].to_numpy()
+    model = fm.RegimeSwitching(regimes, transition_matrix=P, asset="Y")
+    res = fm.simulate(
+        model, start="2000-01-01", freq="1d", n_steps=30_000, seed=23, return_hidden=True
+    )
+    r = res.regimes["Y"].to_numpy()
 
     # Transition probabilities: counts from each regime are multinomial.
     counts = np.zeros((3, 3))
@@ -183,11 +188,13 @@ def test_regime_switching_recovers_transitions_and_regime_parameters():
     P_hat = counts / n_from
     assert np.all(np.abs(P_hat - P) < Z * np.sqrt(P * (1 - P) / n_from) + 1e-12)
 
-    # Given the true regimes, OLS within each regime recovers that regime's combination.
+    # Given the true regimes, OLS of the output on the shared sources, within each regime,
+    # recovers that regime's combination.
+    inputs = res.sources["R0"].sources
+    X_all = np.column_stack([inputs["X1"].output["X1"], inputs["X2"].output["X2"]])
     for k, reg in enumerate(regimes):
         rows = r == k
-        X = sm.add_constant(np.column_stack([x1["X"][rows], x2["X"][rows]]))
-        fit = sm.OLS(out["X"].to_numpy()[rows], X).fit()
+        fit = sm.OLS(res.output["Y"].to_numpy()[rows], sm.add_constant(X_all[rows])).fit()
         truth = np.array([reg.constant * DT, *reg.weights])
         assert np.all(np.abs(fit.params - truth) < Z * fit.bse)
         sigma_hat = np.sqrt(fit.mse_resid / DT)

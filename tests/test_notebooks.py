@@ -15,7 +15,7 @@ pytestmark = pytest.mark.notebooks
 
 
 def test_one_notebook_per_model():
-    assert len(NOTEBOOKS) == 7
+    assert len(NOTEBOOKS) == 6
 
 
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.stem)

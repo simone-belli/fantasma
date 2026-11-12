@@ -21,7 +21,7 @@ helper                gives                                          rows
 
 The level helpers take the start and the starting price from ``attrs`` by default; pass
 ``start=`` / ``initial_price=`` to override them, or when the frame does not carry them (pandas
-drops ``attrs`` after some operations, and driven models have no natural starting level).
+drops ``attrs`` after some operations, and frames built outside Fantasma carry none).
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ def to_returns(log_returns: pd.DataFrame) -> pd.DataFrame:
 
 
 def from_prices(prices: pd.DataFrame) -> pd.DataFrame:
-    """Log returns from prices, e.g. real data to feed a driven model.
+    """Log returns from prices, e.g. real data to use as a source of a node.
 
     The first row becomes the start: it is dropped from the rows and recorded in ``attrs``
     with its prices, so ``to_prices(from_prices(p))`` gives ``p`` back.

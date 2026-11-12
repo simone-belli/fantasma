@@ -40,3 +40,22 @@ def test_no_hardcoded_version_in_sources():
         if literal.search(p.read_text())
     ]
     assert not offenders, f"hardcoded __version__ in {offenders}; {HINT}"
+
+
+# --- ownership ------------------------------------------------------------------------------
+
+OWNER = "Simone Belli"
+COPYRIGHT = f"Copyright (c) 2026 {OWNER}"
+
+
+def test_ownership_is_consistent():
+    """The author and copyright line match across the license, metadata and docs."""
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    assert {"name": OWNER} in project["authors"]
+    assert COPYRIGHT in (ROOT / "LICENSE").read_text()
+    from importlib.metadata import metadata
+
+    assert metadata("fantasma")["Author"] == OWNER, HINT
+    assert COPYRIGHT in (fantasma.__doc__ or "")
+    for doc in ("README.md", "SPEC.md"):
+        assert f"© 2026 {OWNER}" in (ROOT / doc).read_text(), doc

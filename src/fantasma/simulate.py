@@ -11,6 +11,11 @@ from .output import hidden_frame, log_return_frame
 from .process import Process
 
 
+def one_or_list(results: list, n_paths: int):
+    """The single path itself when ``n_paths`` is 1, else the list of paths."""
+    return results[0] if n_paths == 1 else results
+
+
 def simulate_states(
     process: Process, grid: TimeGrid, seed: int, n_paths: int = 1, noise: Noise | None = None
 ) -> np.ndarray:
@@ -25,11 +30,22 @@ def simulate_states(
         raise ValueError(f"n_paths must be a positive integer, got {n_paths!r}")
     if seed is None:
         raise ValueError("a seed is required, so every run is reproducible")
+    children = np.random.SeedSequence(seed).spawn(n_paths)
+    return step_states(process, grid, children, noise)
+
+
+def step_states(
+    process: Process,
+    grid: TimeGrid,
+    children: list[np.random.SeedSequence],
+    noise: Noise | None = None,
+) -> np.ndarray:
+    """State paths ``(len(children), n_steps + 1, n_state)``, path ``i`` drawing its shocks
+    from ``children[i]``. All paths step together, vectorised."""
     noise = noise or GaussianNoise()
     dts = grid.dts
     n_steps = len(dts)
-
-    children = np.random.SeedSequence(seed).spawn(n_paths)
+    n_paths = len(children)
     shocks = np.stack(
         [noise.sample(np.random.default_rng(c), n_steps, process.n_shocks) for c in children],
         axis=1,
@@ -43,10 +59,10 @@ def simulate_states(
 
 
 def simulate(
-    process: Process,
+    process,
     *,
-    start,
-    freq,
+    start=None,
+    freq=None,
     seed: int,
     n_steps: int | None = None,
     end=None,
@@ -54,21 +70,51 @@ def simulate(
     return_hidden: bool = False,
     noise: Noise | None = None,
     days_per_year: float | None = None,
-) -> list[pd.DataFrame] | list[tuple[pd.DataFrame, pd.DataFrame]]:
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame] | list:
     """Simulate ``n_paths`` independent paths of ``process`` on a regular grid.
 
-    Returns a list with one DataFrame of **log returns** per path (index ``ts`` in UTC for
+    With ``n_paths=1`` (the default) the single path is returned itself; with more, a list
+    with one element per path. Each path is a DataFrame of **log returns** (index ``ts`` in UTC for
     intraday ``freq``, ``date`` for daily; one column per asset): ``n_steps`` rows, row t the
     return over the step ending at t. ``attrs`` record the start timestamp and starting
     prices, so ``fm.to_prices(frame)`` gives the price path (``n_steps + 1`` rows, start
     included); see :mod:`fantasma.transforms`.
 
-    With ``return_hidden``, each element is a ``(log_returns, hidden)`` pair, ``hidden`` holding
+    With ``return_hidden``, each path is a ``(log_returns, hidden)`` pair, ``hidden`` holding
     the ground-truth state on the full grid (``n_steps + 1`` rows, start included).
 
     ``freq`` is an Almanac frequency (``"1m"``, ``"10m"``, ``"1h"``, ``"1d"``) or any pandas
     offset. Give either ``n_steps`` or ``end``.
+
+    ``process`` may also be a node built from sources, a
+    :class:`~fantasma.combination.LinearCombination` or a
+    :class:`~fantasma.combination.RegimeSwitching`, or a list of them: the result is then one
+    log-return frame per path with a column per node, or with ``return_hidden`` a
+    :class:`~fantasma.combination.PathResult` giving access to every source's realisation and
+    the regime paths. With data among the sources, the grid is the data's index and
+    ``start``/``freq``/``n_steps``/``end`` must not be given (see
+    :mod:`fantasma.combination`).
     """
+    from .combination import is_node, simulate_nodes
+
+    if is_node(process) or (
+        isinstance(process, (list, tuple)) and process and all(is_node(p) for p in process)
+    ):
+        paths = simulate_nodes(
+            process,
+            seed=seed,
+            n_paths=n_paths,
+            return_hidden=return_hidden,
+            noise=noise,
+            days_per_year=days_per_year,
+            start=start,
+            freq=freq,
+            n_steps=n_steps,
+            end=end,
+        )
+        return one_or_list(paths, n_paths)
+    if start is None or freq is None:
+        raise ValueError("give start and freq (and n_steps or end) to simulate a model")
     kwargs = {} if days_per_year is None else {"days_per_year": days_per_year}
     grid = RegularGrid(start, freq, n_steps=n_steps, end=end, **kwargs)
     return simulate_on(
@@ -85,9 +131,10 @@ def simulate_on(
     return_hidden: bool = False,
     noise: Noise | None = None,
 ):
-    """Like :func:`simulate`, on a prebuilt :class:`TimeGrid`."""
+    """Like :func:`simulate`, on a prebuilt :class:`TimeGrid` (the single path itself when
+    ``n_paths`` is 1, else a list)."""
     paths = simulate_states(process, grid, seed, n_paths, noise)
     frames = [log_return_frame(process, p, grid) for p in paths]
-    if not return_hidden:
-        return frames
-    return [(f, hidden_frame(process, p, grid)) for f, p in zip(frames, paths, strict=True)]
+    if return_hidden:
+        frames = [(f, hidden_frame(process, p, grid)) for f, p in zip(frames, paths, strict=True)]
+    return one_or_list(frames, n_paths)

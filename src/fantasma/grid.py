@@ -1,8 +1,10 @@
 """The time grid: maps abstract simulation steps to timestamps and year fractions.
 
-v1 has one grid, :class:`RegularGrid`: evenly spaced, continuous time, no sessions, holidays or
-overnight gaps. The simulator only asks a grid for its ``index`` and the per-step ``dts``, so a
-session calendar with uneven steps can be added later as another ``TimeGrid``.
+Two grids exist. :class:`RegularGrid` is evenly spaced continuous time, with no sessions,
+holidays or overnight gaps. :class:`IndexGrid` runs on given timestamps, gaps included: it is
+the grid when data sources are among a model's sources. The simulator only asks a grid for its
+``index`` and the per-step ``dts``, so a session calendar can be added later as another
+``TimeGrid``.
 """
 
 from __future__ import annotations
@@ -109,3 +111,41 @@ class RegularGrid(TimeGrid):
     @property
     def dts(self) -> np.ndarray:
         return np.full(self._n, self.dt)
+
+
+class IndexGrid(TimeGrid):
+    """A grid on given timestamps, e.g. the index of real data, gaps included.
+
+    ``index`` holds the end of each step (the rows of a log-return frame); the grid's own
+    index is ``start`` followed by them, and each ``dt`` is the gap to the previous instant
+    over a year of ``days_per_year`` days. Without ``start``, the first gap is assumed to
+    repeat before the first row: ``start = index[0] - (index[1] - index[0])``.
+    """
+
+    def __init__(self, index, start=None, days_per_year: float = DAYS_PER_YEAR):
+        if not isinstance(index, pd.DatetimeIndex):
+            raise ValueError("an IndexGrid needs a DatetimeIndex")
+        if len(index) < 1 or (start is None and len(index) < 2):
+            raise ValueError("an IndexGrid needs at least two instants, counting the start")
+        if not index.is_monotonic_increasing or not index.is_unique:
+            raise ValueError("the index must be strictly increasing")
+        if days_per_year <= 0:
+            raise ValueError("days_per_year must be positive")
+        start = index[0] - (index[1] - index[0]) if start is None else pd.Timestamp(start)
+        if (start.tz is None) != (index.tz is None):
+            raise ValueError(f"start {start} and the index must both have, or lack, a timezone")
+        if start >= index[0]:
+            raise ValueError(f"start {start} must be before the first row {index[0]}")
+        self.start = start
+        self._index = index.insert(0, start)
+        self.days_per_year = float(days_per_year)
+
+    @property
+    def index(self) -> pd.DatetimeIndex:
+        return self._index
+
+    @property
+    def dts(self) -> np.ndarray:
+        # Timedelta arithmetic, not asi8: the index may be in s/ms/us resolution, not ns.
+        gaps = self._index[1:] - self._index[:-1]
+        return np.asarray(gaps / pd.Timedelta(days=self.days_per_year), dtype=float)
