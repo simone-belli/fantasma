@@ -46,4 +46,5 @@ class Brownian(Process):
     def step(self, state: np.ndarray, shocks: np.ndarray, dt: float, inputs: Inputs) -> np.ndarray:
         mu = self.param("mu", inputs)
         sigma = self.param("sigma", inputs)
-        return state + (mu * dt + sigma * np.sqrt(dt) * shocks[:, 0])[:, None]
+        new: np.ndarray = state + (mu * dt + sigma * np.sqrt(dt) * shocks[:, 0])[:, None]
+        return new

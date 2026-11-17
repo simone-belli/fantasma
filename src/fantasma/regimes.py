@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 _TOL = 1e-10
 
@@ -16,7 +17,7 @@ class MarkovChain:
     stationary distribution of the chain.
     """
 
-    def __init__(self, transition_matrix, initial=None):
+    def __init__(self, transition_matrix: ArrayLike, initial: int | ArrayLike | None = None):
         try:
             P = np.asarray(transition_matrix, dtype=float)
         except (TypeError, ValueError):
@@ -32,7 +33,7 @@ class MarkovChain:
         self.initial = initial
         self.initial_distribution = self._initial_distribution(initial)
 
-    def _initial_distribution(self, initial) -> np.ndarray:
+    def _initial_distribution(self, initial: int | ArrayLike | None) -> np.ndarray:
         n = self.n_regimes
         if initial is None:
             return self.stationary_distribution()
@@ -50,7 +51,8 @@ class MarkovChain:
             ) from None
         if dist.shape != (n,) or np.any(dist < 0) or not np.isclose(dist.sum(), 1.0, atol=_TOL):
             raise ValueError(f"initial distribution must be {n} probabilities summing to 1")
-        return dist / dist.sum()
+        normalised: np.ndarray = dist / dist.sum()
+        return normalised
 
     def stationary_distribution(self) -> np.ndarray:
         """The distribution ``pi`` with ``pi @ P = pi``; raises if it is not unique."""
@@ -62,7 +64,8 @@ class MarkovChain:
         b[-1] = 1.0
         pi = np.linalg.lstsq(A, b, rcond=None)[0]
         pi = np.clip(pi, 0.0, None)
-        return pi / pi.sum()
+        stationary: np.ndarray = pi / pi.sum()
+        return stationary
 
     def sample(self, rng: np.random.Generator, n_rows: int) -> np.ndarray:
         """A regime path of ``n_rows`` integers: the initial regime, then one move per row."""

@@ -9,10 +9,15 @@ the grid when data sources are among a model's sources. The simulator only asks 
 
 from __future__ import annotations
 
+import datetime as dt
 from abc import ABC, abstractmethod
 
 import numpy as np
 import pandas as pd
+from pandas.tseries.frequencies import to_offset
+from pandas.tseries.offsets import BaseOffset, Tick
+
+from ._types import FreqLike, TimestampLike
 
 # Almanac's frequency names (``almanac_data.schema``), plus its older ``daily`` spelling.
 ALMANAC_FREQUENCIES = {
@@ -42,20 +47,33 @@ class TimeGrid(ABC):
         return len(self.index) - 1
 
 
-def parse_freq(freq) -> pd.Timedelta:
+def parse_freq(freq: FreqLike) -> pd.Timedelta:
     """A step length from an Almanac name (``"10m"``, ``"1d"``) or any pandas offset/timedelta."""
     if isinstance(freq, str) and freq in ALMANAC_FREQUENCIES:
         return ALMANAC_FREQUENCIES[freq]
     try:
-        step = pd.Timedelta(pd.tseries.frequencies.to_offset(freq))
+        step = _as_timedelta(freq)
     except (TypeError, ValueError):
-        try:
-            step = pd.Timedelta(freq)
-        except (TypeError, ValueError):
-            raise ValueError(f"unknown frequency {freq!r}") from None
+        raise ValueError(f"unknown frequency {freq!r}") from None
     if step <= pd.Timedelta(0):
         raise ValueError(f"frequency must be positive, got {freq!r}")
     return step
+
+
+def _as_timedelta(freq: FreqLike) -> pd.Timedelta:
+    """A fixed step length: a fixed-length offset (or its alias), else whatever
+    ``pd.Timedelta`` parses. Calendar offsets (months, business days) have no fixed length."""
+    if isinstance(freq, (str, BaseOffset, dt.timedelta)):
+        try:
+            offset = to_offset(freq)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if isinstance(offset, Tick):
+                return pd.Timedelta(offset)
+    if isinstance(freq, BaseOffset):
+        raise ValueError(f"{freq!r} has no fixed length")
+    return pd.Timedelta(freq)
 
 
 class RegularGrid(TimeGrid):
@@ -68,10 +86,10 @@ class RegularGrid(TimeGrid):
 
     def __init__(
         self,
-        start,
-        freq,
+        start: TimestampLike,
+        freq: FreqLike,
         n_steps: int | None = None,
-        end=None,
+        end: TimestampLike | None = None,
         days_per_year: float = DAYS_PER_YEAR,
     ):
         if (n_steps is None) == (end is None):
@@ -122,7 +140,12 @@ class IndexGrid(TimeGrid):
     repeat before the first row: ``start = index[0] - (index[1] - index[0])``.
     """
 
-    def __init__(self, index, start=None, days_per_year: float = DAYS_PER_YEAR):
+    def __init__(
+        self,
+        index: pd.DatetimeIndex,
+        start: TimestampLike | None = None,
+        days_per_year: float = DAYS_PER_YEAR,
+    ):
         if not isinstance(index, pd.DatetimeIndex):
             raise ValueError("an IndexGrid needs a DatetimeIndex")
         if len(index) < 1 or (start is None and len(index) < 2):

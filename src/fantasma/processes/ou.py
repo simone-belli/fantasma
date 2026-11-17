@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from ..process import (
     Inputs,
@@ -14,16 +15,26 @@ from ..process import (
 )
 
 
-def half_life_to_kappa(half_life):
+def half_life_to_kappa(half_life: ArrayLike) -> np.ndarray:
     """Speed of mean reversion ``kappa = ln 2 / half_life`` (half-life in years)."""
-    return np.log(2.0) / half_life
+    kappa: np.ndarray = np.log(2.0) / np.asarray(half_life, dtype=float)
+    return kappa
 
 
-def ou_step(x, theta, kappa, sigma, dt, z):
+def ou_step(
+    x: np.ndarray,
+    theta: ArrayLike,
+    kappa: ArrayLike,
+    sigma: ArrayLike,
+    dt: float,
+    z: np.ndarray,
+) -> np.ndarray:
     """Exact OU transition over ``dt``: mean ``theta + (x - theta) e^{-kappa dt}``."""
+    theta, kappa, sigma = (np.asarray(v, dtype=float) for v in (theta, kappa, sigma))
     decay = np.exp(-kappa * dt)
     sd = sigma * np.sqrt(-np.expm1(-2.0 * kappa * dt) / (2.0 * kappa))
-    return theta + (x - theta) * decay + sd * z
+    x_next: np.ndarray = theta + (x - theta) * decay + sd * z
+    return x_next
 
 
 class OrnsteinUhlenbeck(Process):

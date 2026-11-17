@@ -30,10 +30,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import TypeGuard
 
 import numpy as np
 import pandas as pd
+from numpy.typing import ArrayLike
 
+from ._types import FreqLike, TimestampLike
 from .grid import DAYS_PER_YEAR, IndexGrid, RegularGrid, TimeGrid
 from .noise import GaussianNoise, Noise
 from .output import hidden_frame, log_return_frame
@@ -70,17 +73,32 @@ class PathResult:
 
 
 @dataclass(frozen=True)
-class _Source:
-    kind: str  # "model", "data" or "node"
+class _ModelSource:
     name: str
-    model: Process | None = None
-    column: str | None = None
-    data: pd.Series | None = None
-    node: _Node | None = None
-    origin: int = 0  # id of the object the user passed, for data sources
+    model: Process
+    column: str
 
 
-def _finite(name: str, value) -> float:
+@dataclass(frozen=True)
+class _DataSource:
+    name: str
+    data: pd.Series
+    origin: int  # id of the object the user passed
+
+
+@dataclass(frozen=True)
+class _NodeSource:
+    name: str
+    node: _Node
+
+
+type _Source = _ModelSource | _DataSource | _NodeSource
+
+# What a node accepts as a source (see the module docstring).
+type SourceLike = Process | tuple[Process, str] | pd.Series | pd.DataFrame | Node
+
+
+def _finite(name: str, value: float) -> float:
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -113,10 +131,10 @@ def _check_data(name: str, series: pd.Series) -> pd.Series:
     return series
 
 
-def _as_source(label: str, i: int, src) -> _Source:
+def _as_source(label: str, i: int, src: SourceLike) -> _Source:
     where = f"{label}[{i}]"
     if isinstance(src, _Node):
-        return _Source("node", src.asset, node=src)
+        return _NodeSource(src.asset, src)
     if isinstance(src, tuple):
         if len(src) != 2 or not isinstance(src[0], Process) or not isinstance(src[1], str):
             raise TypeError(f"{where}: a tuple must be (model, asset name), got {src!r}")
@@ -126,25 +144,25 @@ def _as_source(label: str, i: int, src) -> _Source:
                 f"{where}: {column!r} is not an asset of the model; "
                 f"assets: {list(model.asset_names)}"
             )
-        return _Source("model", column, model=model, column=column)
+        return _ModelSource(column, model, column)
     if isinstance(src, Process):
         if len(src.asset_names) != 1:
             raise ValueError(
                 f"{where} has assets {list(src.asset_names)}; select one with (model, asset name)"
             )
-        return _Source("model", src.asset_names[0], model=src, column=src.asset_names[0])
+        return _ModelSource(src.asset_names[0], src, src.asset_names[0])
     if isinstance(src, pd.DataFrame):
         if src.shape[1] != 1:
             raise ValueError(f"{where}: a DataFrame source needs exactly one column")
         series = src.iloc[:, 0]
         series.attrs = dict(src.attrs)
         name = str(src.columns[0])
-        return _Source("data", name, data=_check_data(name, series.rename(name)), origin=id(src))
+        return _DataSource(name, _check_data(name, series.rename(name)), id(src))
     if isinstance(src, pd.Series):
         if src.name is None:
             raise ValueError(f"{where}: a Series source needs a name")
         name = str(src.name)
-        return _Source("data", name, data=_check_data(name, src), origin=id(src))
+        return _DataSource(name, _check_data(name, src), id(src))
     raise TypeError(
         f"{where} must be a model, (model, asset), a Series, a one-column DataFrame, "
         f"a LinearCombination or a RegimeSwitching; got {type(src).__name__}"
@@ -158,7 +176,9 @@ class _Node:
     asset: str
     initial_price: float
 
-    def _init_sources(self, label: str, sources, asset: str, initial_price: float) -> None:
+    def _init_sources(
+        self, label: str, sources: Sequence[SourceLike], asset: str, initial_price: float
+    ) -> None:
         if not isinstance(sources, (list, tuple)) or not sources:
             raise ValueError(f"{label} must be a non-empty list")
         self.sources = [_as_source(label, i, s) for i, s in enumerate(sources)]
@@ -173,7 +193,9 @@ class _Node:
         self.asset = asset
         self.data_index = _shared_index([self])  # raises if data indexes differ
 
-    def _evaluate(self, values, dts, rng, noise) -> tuple[np.ndarray, np.ndarray | None]:
+    def _evaluate(
+        self, values: list[np.ndarray], dts: np.ndarray, rng: np.random.Generator, noise: Noise
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         """Output log returns from the sources' ``values`` (one array per source), and the
         regime path for a regime-switching node."""
         raise NotImplementedError
@@ -190,7 +212,7 @@ class LinearCombination(_Node):
 
     def __init__(
         self,
-        sources: Sequence,
+        sources: Sequence[SourceLike],
         weights: Sequence[float],
         sigma: float = 0.0,
         *,
@@ -207,7 +229,9 @@ class LinearCombination(_Node):
             raise ValueError(f"sigma must be non-negative, got {sigma!r}")
         self.constant = _finite("constant", constant)
 
-    def _evaluate(self, values, dts, rng, noise):
+    def _evaluate(
+        self, values: list[np.ndarray], dts: np.ndarray, rng: np.random.Generator, noise: Noise
+    ) -> tuple[np.ndarray, None]:
         eps = noise.sample(rng, len(dts), 1)[:, 0]
         total = self.constant * dts + self.sigma * np.sqrt(dts) * eps
         for w, v in zip(self.weights, values, strict=True):
@@ -238,9 +262,9 @@ class RegimeSwitching(_Node):
 
     def __init__(
         self,
-        models: Sequence,
-        transition_matrix,
-        initial=None,
+        models: Sequence[SourceLike],
+        transition_matrix: ArrayLike,
+        initial: int | ArrayLike | None = None,
         *,
         asset: str,
         initial_price: float = 100.0,
@@ -257,7 +281,9 @@ class RegimeSwitching(_Node):
     def n_regimes(self) -> int:
         return len(self.sources)
 
-    def _evaluate(self, values, dts, rng, noise):
+    def _evaluate(
+        self, values: list[np.ndarray], dts: np.ndarray, rng: np.random.Generator, noise: Noise
+    ) -> tuple[np.ndarray, np.ndarray]:
         regime = self.chain.sample(rng, len(dts))
         return np.choose(regime, np.stack(values)), regime
 
@@ -270,22 +296,26 @@ class RegimeSwitching(_Node):
         )
 
 
+# A node: a model built from sources.
+type Node = LinearCombination | RegimeSwitching
+
+
 # --- simulation ---------------------------------------------------------------------------
 
 
-def _walk(roots: Sequence[_Node]):
+def _walk(roots: Sequence[_Node]) -> tuple[list[Process], list[_Node], list[_DataSource]]:
     """Unique models and nodes (by identity) in depth-first order, and all data."""
     models: dict[int, Process] = {}
     nodes: dict[int, _Node] = {}
-    data: list[_Source] = []
+    data: list[_DataSource] = []
 
     def visit(node: _Node) -> None:
         if id(node) in nodes:
             return
         for s in node.sources:
-            if s.kind == "model":
+            if isinstance(s, _ModelSource):
                 models.setdefault(id(s.model), s.model)
-            elif s.kind == "data":
+            elif isinstance(s, _DataSource):
                 data.append(s)
             else:
                 visit(s.node)
@@ -296,71 +326,80 @@ def _walk(roots: Sequence[_Node]):
     return list(models.values()), list(nodes.values()), data
 
 
-def _shared_index(roots) -> pd.DatetimeIndex | None:
+def _shared_index(roots: Sequence[_Node]) -> pd.DatetimeIndex | None:
     _, _, data = _walk(roots)
     if not data:
         return None
     first = data[0].data.index
+    assert isinstance(first, pd.DatetimeIndex)  # checked by _check_data
     for s in data[1:]:
         if not s.data.index.equals(first):
             raise ValueError(f"data sources {data[0].name!r} and {s.name!r} have different indexes")
     return first
 
 
-def _grid(roots, grid_args: dict, days_per_year: float | None) -> TimeGrid:
+def _grid(
+    roots: Sequence[_Node],
+    start: TimestampLike | None,
+    freq: FreqLike | None,
+    n_steps: int | None,
+    end: TimestampLike | None,
+    days_per_year: float | None,
+) -> TimeGrid:
     _, _, data = _walk(roots)
     dpy = DAYS_PER_YEAR if days_per_year is None else days_per_year
     if data:
+        grid_args = {"end": end, "freq": freq, "n_steps": n_steps, "start": start}
         given = sorted(k for k, v in grid_args.items() if v is not None)
         if given:
             raise ValueError(f"the grid comes from the data sources' index; do not pass {given}")
         index = _shared_index(roots)
+        assert index is not None  # there is data
         starts = {s.data.attrs.get(START) for s in data} - {None}
-        start = starts.pop() if len(starts) == 1 else None
-        return IndexGrid(index, start=start, days_per_year=dpy)
-    if grid_args.get("start") is None or grid_args.get("freq") is None:
+        data_start = starts.pop() if len(starts) == 1 else None
+        return IndexGrid(index, start=data_start, days_per_year=dpy)
+    if start is None or freq is None:
         raise ValueError("with only model sources, give start, freq and n_steps (or end)")
-    return RegularGrid(
-        grid_args["start"],
-        grid_args["freq"],
-        grid_args.get("n_steps"),
-        grid_args.get("end"),
-        days_per_year=dpy,
-    )
+    return RegularGrid(start, freq, n_steps, end, days_per_year=dpy)
 
 
 def _name_map(nodes: list[_Node]) -> None:
     """Every source name must mean one thing across all nodes."""
-    seen: dict[str, tuple] = {}
+    seen: dict[str, tuple[object, ...]] = {}
     for node in nodes:
         for s in node.sources:
-            key = {
-                "model": ("model", id(s.model), s.column),
-                "data": ("data", s.origin),
-                "node": ("node", id(s.node)),
-            }[s.kind]
+            key: tuple[object, ...]
+            if isinstance(s, _ModelSource):
+                key = ("model", id(s.model), s.column)
+            elif isinstance(s, _DataSource):
+                key = ("data", s.origin)
+            else:
+                key = ("node", id(s.node))
             if seen.setdefault(s.name, key) != key:
                 raise ValueError(f"the source name {s.name!r} refers to two different sources")
 
 
-def is_node(value) -> bool:
+def is_node(value: object) -> TypeGuard[Node]:
     return isinstance(value, _Node)
 
 
 def simulate_nodes(
-    roots,
+    nodes_or_node: _Node | Sequence[_Node],
     *,
     seed: int,
     n_paths: int = 1,
     return_hidden: bool = False,
     noise: Noise | None = None,
     days_per_year: float | None = None,
-    **grid_args,
-):
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
+    n_steps: int | None = None,
+    end: TimestampLike | None = None,
+) -> list[pd.DataFrame] | list[PathResult]:
     """Simulate one or more nodes; returns a list of paths. See :func:`fantasma.simulate`."""
     from .simulate import step_states  # imported here: simulate dispatches to this module
 
-    roots = [roots] if isinstance(roots, _Node) else list(roots)
+    roots = [nodes_or_node] if isinstance(nodes_or_node, _Node) else list(nodes_or_node)
     if not roots or not all(isinstance(r, _Node) for r in roots):
         raise TypeError("expected a LinearCombination or RegimeSwitching, or a list of them")
     assets = [r.asset for r in roots]
@@ -373,10 +412,11 @@ def simulate_nodes(
     noise = noise or GaussianNoise()
     models, nodes, _ = _walk(roots)
     _name_map(nodes)
-    grid = _grid(roots, grid_args, days_per_year)
+    grid = _grid(roots, start, freq, n_steps, end, days_per_year)
     index, dts = grid.index[1:], grid.dts
 
-    results = []
+    frames: list[pd.DataFrame] = []
+    results: list[PathResult] = []
     for path in np.random.SeedSequence(seed).spawn(n_paths):
         # One child per model, then one per node (its noise, or its regime chain).
         children = path.spawn(len(models) + len(nodes))
@@ -397,28 +437,33 @@ def simulate_nodes(
 
         state = _PathState(realised, outputs, regimes, index, grid)
         frame = _output_frame(roots, state)
-        results.append(_path_result(roots, frame, state) if return_hidden else frame)
-    return results
+        if return_hidden:
+            results.append(_path_result(roots, frame, state))
+        else:
+            frames.append(frame)
+    return results if return_hidden else frames
 
 
 @dataclass(frozen=True)
 class _PathState:
-    realised: dict
-    outputs: dict
-    regimes: dict
+    realised: dict[int, SourceRealisation]
+    outputs: dict[int, np.ndarray]
+    regimes: dict[int, np.ndarray]
     index: pd.DatetimeIndex
     grid: TimeGrid
 
 
-def _source_values(s: _Source, realised, outputs) -> np.ndarray:
-    if s.kind == "model":
+def _source_values(
+    s: _Source, realised: dict[int, SourceRealisation], outputs: dict[int, np.ndarray]
+) -> np.ndarray:
+    if isinstance(s, _ModelSource):
         return realised[id(s.model)].output[s.column].to_numpy()
-    if s.kind == "data":
+    if isinstance(s, _DataSource):
         return s.data.to_numpy(dtype=float)
     return outputs[id(s.node)]
 
 
-def _output_frame(nodes, state: _PathState) -> pd.DataFrame:
+def _output_frame(nodes: Sequence[_Node], state: _PathState) -> pd.DataFrame:
     columns = pd.Index([n.asset for n in nodes], name="symbol", dtype="string")
     values = np.column_stack([state.outputs[id(n)] for n in nodes])
     frame = pd.DataFrame(values, index=state.index, columns=columns, dtype="float64")
@@ -427,7 +472,7 @@ def _output_frame(nodes, state: _PathState) -> pd.DataFrame:
     return frame
 
 
-def _regimes_frame(nodes, state: _PathState) -> pd.DataFrame:
+def _regimes_frame(nodes: Sequence[_Node], state: _PathState) -> pd.DataFrame:
     switching = [n for n in nodes if id(n) in state.regimes]
     columns = pd.Index([n.asset for n in switching], name="symbol", dtype="string")
     if not switching:
@@ -436,18 +481,18 @@ def _regimes_frame(nodes, state: _PathState) -> pd.DataFrame:
     return pd.DataFrame(values, index=state.index, columns=columns, dtype="int64")
 
 
-def _path_result(nodes, frame, state: _PathState) -> PathResult:
+def _path_result(nodes: Sequence[_Node], frame: pd.DataFrame, state: _PathState) -> PathResult:
     empty_hidden = pd.DataFrame(
         index=state.grid.index, columns=pd.Index([], name="state", dtype="string"), dtype="float64"
     )
-    sources: dict = {}
+    sources: dict[str, SourceRealisation | PathResult] = {}
     for node in nodes:
         for s in node.sources:
             if s.name in sources:
                 continue
-            if s.kind == "model":
+            if isinstance(s, _ModelSource):
                 sources[s.name] = state.realised[id(s.model)]
-            elif s.kind == "data":
+            elif isinstance(s, _DataSource):
                 data = s.data.to_frame()
                 data.attrs = dict(s.data.attrs)
                 sources[s.name] = SourceRealisation(data, empty_hidden)

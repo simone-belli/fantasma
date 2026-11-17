@@ -274,7 +274,11 @@ fm.Composite({"drift": drift, "price": price}, links={"price.mu": "drift.mu"})
 poetry run pytest                                       # everything
 poetry run pytest -m "not recovery and not notebooks"   # basic checks only (seconds)
 poetry run ruff check src tests && poetry run ruff format --check src tests   # lint, as CI
+poetry run mypy                                         # type check (strict), as CI
 ```
+
+`mypy --strict` covers `src/` and `tests/` (configured in `pyproject.toml`), so new code,
+test helpers included, needs full annotations.
 
 Every model has the basic checks (reproducibility, shape and index, finite values, parameter
 validation); the helpers, combinations and regime switching have their own test files; every

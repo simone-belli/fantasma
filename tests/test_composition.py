@@ -2,20 +2,23 @@
 
 import numpy as np
 import pytest
+from conftest import Grid
 
 import fantasma as fm
 
 
-def test_stochastic_drift_equals_hand_wired_composite():
+def test_stochastic_drift_equals_hand_wired_composite() -> None:
     built = fm.StochasticDrift(sigma=0.2, drift_mean=0.05, drift_half_life=0.5, drift_sigma=0.1)
     drift = fm.OrnsteinUhlenbeck(0.05, 0.5, 0.1, state_name="mu")
     price = fm.Brownian(0.2, mu=0.05, asset="ASSET")
     wired = fm.Composite({"drift": drift, "price": price}, links={"price.mu": "drift.mu"})
-    run = dict(start="2024-01-01", freq="1h", n_steps=200, seed=5)
-    np.testing.assert_array_equal(fm.simulate(built, **run), fm.simulate(wired, **run))
+    run = Grid(start="2024-01-01", freq="1h", n_steps=200)
+    np.testing.assert_array_equal(
+        fm.simulate(built, seed=5, **run), fm.simulate(wired, seed=5, **run)
+    )
 
 
-def test_driven_drift_moves_the_price():
+def test_driven_drift_moves_the_price() -> None:
     # With zero price noise, each log return is exactly the drift at the start of its step * dt.
     model = fm.StochasticDrift(sigma=0.0, drift_mean=0.3, drift_half_life=0.2, drift_sigma=0.5)
     log_returns, hidden = fm.simulate(
@@ -25,7 +28,7 @@ def test_driven_drift_moves_the_price():
     np.testing.assert_allclose(log_returns["ASSET"], hidden["drift.mu"].to_numpy()[:-1] * dt)
 
 
-def test_nested_composites_and_multiple_assets():
+def test_nested_composites_and_multiple_assets() -> None:
     a = fm.StochasticDrift(0.2, 0.0, 1.0, 0.1, asset="A")
     b = fm.OrnsteinUhlenbeck(4.6, 0.1, 0.2, asset="B")
     model = fm.Composite({"a": a, "b": b})
@@ -37,7 +40,7 @@ def test_nested_composites_and_multiple_assets():
     assert model.n_shocks == 3
 
 
-def test_ou_level_drives_ou_mean():
+def test_ou_level_drives_ou_mean() -> None:
     level = fm.Brownian(0.1, asset="L")  # observable log price used as a moving target
     follower = fm.OrnsteinUhlenbeck(4.6, 0.01, 0.0, asset="F", x0=np.log(100))
     model = fm.Composite({"l": level, "f": follower}, links={"f.theta": "l.log_price"})
@@ -58,21 +61,21 @@ def test_ou_level_drives_ou_mean():
         {"price": "drift.mu"},  # malformed target
     ],
 )
-def test_bad_links_rejected(links):
+def test_bad_links_rejected(links: dict[str, str]) -> None:
     drift = fm.OrnsteinUhlenbeck(0.0, 1.0, 0.1, state_name="mu")
     price = fm.Brownian(0.2, mu=0.0)
     with pytest.raises(ValueError):
         fm.Composite({"drift": drift, "price": price}, links=links)
 
 
-def test_duplicate_assets_rejected():
+def test_duplicate_assets_rejected() -> None:
     with pytest.raises(ValueError):
         fm.Composite({"a": fm.Brownian(0.1, asset="X"), "b": fm.Brownian(0.1, asset="X")})
 
 
-def test_custom_noise_is_used():
+def test_custom_noise_is_used() -> None:
     class Zero(fm.Noise):
-        def sample(self, rng, n_steps, n_shocks):
+        def sample(self, rng: np.random.Generator, n_steps: int, n_shocks: int) -> np.ndarray:
             return np.zeros((n_steps, n_shocks))
 
     log_returns = fm.simulate(

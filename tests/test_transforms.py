@@ -1,15 +1,18 @@
 """The log-return contract and the helpers that turn log returns into other quantities."""
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
+from conftest import Grid
 
 import fantasma as fm
 
-RUN = dict(start="2024-01-01", freq="10m", n_steps=300)
+RUN = Grid(start="2024-01-01", freq="10m", n_steps=300)
 
 
-def test_to_prices_rebuilds_the_true_price_path(process):
+def test_to_prices_rebuilds_the_true_price_path(process: fm.Process) -> None:
     """``to_prices`` of the simulated log returns is exactly ``exp`` of the model's log prices,
     start row included: for OU too, whose dynamics depend on the level."""
     log_returns = fm.simulate(process, seed=4, **RUN)
@@ -28,7 +31,7 @@ def test_to_prices_rebuilds_the_true_price_path(process):
     assert log_prices.attrs["quantity"] == "log_price"
 
 
-def test_to_returns(process):
+def test_to_returns(process: fm.Process) -> None:
     log_returns = fm.simulate(process, seed=4, **RUN)
     returns = fm.to_returns(log_returns)
     prices = fm.to_prices(log_returns)
@@ -37,7 +40,7 @@ def test_to_returns(process):
     np.testing.assert_allclose(returns, prices.pct_change().iloc[1:], rtol=1e-9, atol=1e-14)
 
 
-def test_from_prices_round_trip(process):
+def test_from_prices_round_trip(process: fm.Process) -> None:
     log_returns = fm.simulate(process, seed=4, **RUN)
     back = fm.from_prices(fm.to_prices(log_returns))
     np.testing.assert_allclose(back.to_numpy(), log_returns.to_numpy(), atol=1e-12)
@@ -48,7 +51,7 @@ def test_from_prices_round_trip(process):
         assert back.attrs["initial_log_price"][col] == pytest.approx(value, abs=1e-12)
 
 
-def test_from_prices_accepts_unlabelled_real_data():
+def test_from_prices_accepts_unlabelled_real_data() -> None:
     idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-04"], name="date")
     prices = pd.DataFrame({"ES": [100.0, 101.0, 99.0]}, index=idx)
     log_returns = fm.from_prices(prices)
@@ -65,7 +68,9 @@ def test_from_prices_accepts_unlabelled_real_data():
         ({"X": 10.0, "Y": 20.0}, [10.0, 20.0]),
     ],
 )
-def test_explicit_initial_price_overrides_attrs(initial_price, expected):
+def test_explicit_initial_price_overrides_attrs(
+    initial_price: fm.transforms.PerColumn, expected: list[float]
+) -> None:
     model = fm.Composite({c: fm.Brownian(0.2, asset=c) for c in ("X", "Y")})
     log_returns = fm.simulate(model, seed=0, **RUN)
     prices = fm.to_prices(log_returns, initial_price=initial_price)
@@ -74,13 +79,13 @@ def test_explicit_initial_price_overrides_attrs(initial_price, expected):
     np.testing.assert_allclose(prices / prices.iloc[0], default / default.iloc[0])
 
 
-def test_explicit_start():
+def test_explicit_start() -> None:
     log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     earlier = pd.Timestamp("2023-12-31 23:00", tz="UTC")
     assert fm.to_prices(log_returns, start=earlier).index[0] == earlier
 
 
-def test_missing_attrs_need_arguments():
+def test_missing_attrs_need_arguments() -> None:
     log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     plain = log_returns.copy()
     plain.attrs.clear()
@@ -102,13 +107,13 @@ def test_missing_attrs_need_arguments():
         (dict(start=pd.Timestamp("2024-06-01", tz="UTC")), "before the first row"),
     ],
 )
-def test_bad_arguments(kwargs, match):
+def test_bad_arguments(kwargs: dict[str, Any], match: str) -> None:
     log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     with pytest.raises(ValueError, match=match):
         fm.to_prices(log_returns, **kwargs)
 
 
-def test_mislabelled_frames_are_refused():
+def test_mislabelled_frames_are_refused() -> None:
     log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     prices = fm.to_prices(log_returns)
     for helper in (fm.to_prices, fm.to_log_prices, fm.to_returns):
@@ -118,7 +123,7 @@ def test_mislabelled_frames_are_refused():
         fm.from_prices(log_returns)
 
 
-def test_from_prices_validation():
+def test_from_prices_validation() -> None:
     idx = pd.date_range("2024-01-01", periods=3, name="date")
     with pytest.raises(ValueError, match="positive"):
         fm.from_prices(pd.DataFrame({"A": [1.0, -1.0, 2.0]}, index=idx))
@@ -128,7 +133,7 @@ def test_from_prices_validation():
         fm.from_prices(pd.DataFrame({"A": [1.0]}, index=idx[:1]))
 
 
-def test_nan_propagates_to_later_levels():
+def test_nan_propagates_to_later_levels() -> None:
     log_returns = fm.simulate(fm.Brownian(0.2), seed=0, **RUN)
     log_returns.iloc[10, 0] = np.nan
     prices = fm.to_prices(log_returns)

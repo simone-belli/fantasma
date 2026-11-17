@@ -6,6 +6,7 @@ standard error is the method's expected estimation error (analytic, or across ma
 """
 
 import numpy as np
+import pandas as pd
 import pytest
 
 import fantasma as fm
@@ -22,11 +23,11 @@ Z = 4.0  # tolerance in standard errors: a false failure about once in 16,000 ru
 DT = 1 / 365.25
 
 
-def daily(process, n_steps, seed, **kw):
-    return fm.simulate(process, start="2000-01-01", freq="1d", n_steps=n_steps, seed=seed, **kw)
+def daily(process: fm.Process, n_steps: int, seed: int) -> pd.DataFrame:
+    return fm.simulate(process, start="2000-01-01", freq="1d", n_steps=n_steps, seed=seed)
 
 
-def test_brownian_realised_vol():
+def test_brownian_realised_vol() -> None:
     sigma, n = 0.2, 50_000
     log_returns = daily(fm.Brownian(sigma), n, seed=10)
     r = log_returns["ASSET"].to_numpy()
@@ -35,7 +36,7 @@ def test_brownian_realised_vol():
     assert abs(sigma_hat - sigma) < Z * se
 
 
-def test_brownian_drift_and_vol():
+def test_brownian_drift_and_vol() -> None:
     mu, sigma, n = 0.1, 0.2, 73_000  # 200 years, so the drift is measurable
     log_returns = daily(fm.Brownian(sigma, mu=mu), n, seed=11)
     r = log_returns["ASSET"].to_numpy()
@@ -45,7 +46,7 @@ def test_brownian_drift_and_vol():
     assert abs(sigma_hat - sigma) < Z * sigma / np.sqrt(2 * n)
 
 
-def test_ou_ar1_recovers_mean_and_half_life():
+def test_ou_ar1_recovers_mean_and_half_life() -> None:
     theta, half_life, sigma, n = np.log(50.0), 0.1, 0.3, 50_000
     log_returns = daily(fm.OrnsteinUhlenbeck(theta, half_life, sigma, asset="OU"), n, seed=12)
     x = fm.to_log_prices(log_returns)["OU"].to_numpy()
@@ -61,7 +62,7 @@ def test_ou_ar1_recovers_mean_and_half_life():
     assert abs(theta_hat - theta) < Z * np.sqrt(g_theta @ cov @ g_theta)
 
 
-def test_cointegrated_rank_and_loadings():
+def test_cointegrated_rank_and_loadings() -> None:
     loadings = np.array([[1.0], [0.5], [2.0]])
     model = fm.Cointegrated(
         loadings,
@@ -71,9 +72,13 @@ def test_cointegrated_rank_and_loadings():
         assets=["X", "Y", "Z"],
     )
     n_paths = 40
-    paths = daily(model, 20_000, seed=13, n_paths=n_paths)
+    paths = fm.simulate(
+        model, start="2000-01-01", freq="1d", n_steps=20_000, seed=13, n_paths=n_paths
+    )
+    assert isinstance(paths, list)
 
-    ratios, ranks = [], []
+    ratios: list[np.ndarray] = []
+    ranks: list[int] = []
     for log_returns in paths:
         # Measured from the start, the factors and spreads start at zero and have no drift, so
         # the test takes no deterministic terms: log prices relative to the start, from 1.0.
@@ -92,13 +97,21 @@ def test_cointegrated_rank_and_loadings():
     wrong = sum(r != 2 for r in ranks)
     assert wrong <= n_paths * 0.05 + Z * np.sqrt(n_paths * 0.05 * 0.95)
 
-    ratios = np.array(ratios)
+    ratio = np.array(ratios)
     truth = loadings[:, 0] / loadings[0, 0]
-    se = ratios.std(axis=0, ddof=1) / np.sqrt(n_paths)
-    assert np.all(np.abs(ratios.mean(axis=0) - truth) < Z * se + 1e-12)
+    se = ratio.std(axis=0, ddof=1) / np.sqrt(n_paths)
+    assert np.all(np.abs(ratio.mean(axis=0) - truth) < Z * se + 1e-12)
 
 
-def kalman_drift(r, dt, sigma, mean, half_life, drift_sigma, mu0):
+def kalman_drift(
+    r: np.ndarray,
+    dt: float,
+    sigma: float,
+    mean: float,
+    half_life: float,
+    drift_sigma: float,
+    mu0: float,
+) -> tuple[np.ndarray, np.ndarray]:
     """Filtered drift and its variance, for returns ``r = mu dt + sigma sqrt(dt) eps`` with
     ``mu`` an exactly discretised OU process (the true model, known parameters)."""
     phi = np.exp(-np.log(2) / half_life * dt)
@@ -115,21 +128,23 @@ def kalman_drift(r, dt, sigma, mean, half_life, drift_sigma, mu0):
     return est, var
 
 
-def test_stochastic_drift_kalman_tracks_hidden_drift():
-    params = dict(sigma=0.1, drift_mean=0.05, drift_half_life=2.0, drift_sigma=0.3)
-    model = fm.StochasticDrift(**params)
-    log_returns, hidden = daily(model, 40_000, seed=14, return_hidden=True)
+def test_stochastic_drift_kalman_tracks_hidden_drift() -> None:
+    sigma, drift_mean, drift_half_life, drift_sigma = 0.1, 0.05, 2.0, 0.3
+    model = fm.StochasticDrift(sigma, drift_mean, drift_half_life, drift_sigma)
+    log_returns, hidden = fm.simulate(
+        model, start="2000-01-01", freq="1d", n_steps=40_000, seed=14, return_hidden=True
+    )
     r = log_returns["ASSET"].to_numpy()
     # Hidden state is on the full grid: return t is driven by the drift at the start of its step.
     true_mu = hidden["drift.mu"].to_numpy()[:-1]
     est, var = kalman_drift(
         r,
         DT,
-        params["sigma"],
-        params["drift_mean"],
-        params["drift_half_life"],
-        params["drift_sigma"],
-        mu0=params["drift_mean"],
+        sigma,
+        drift_mean,
+        drift_half_life,
+        drift_sigma,
+        mu0=drift_mean,
     )
     burn = 2_000
     err, var = (est - true_mu)[burn:], var[burn:]
@@ -143,7 +158,7 @@ def test_stochastic_drift_kalman_tracks_hidden_drift():
     assert abs(z2.mean() - 1) < Z * batches.std(ddof=1) / np.sqrt(len(batches))
 
 
-def test_linear_combination_ols_recovers_weights_constant_sigma():
+def test_linear_combination_ols_recovers_weights_constant_sigma() -> None:
     # Two outputs sharing one market source, plus their own second source.
     mkt = fm.Brownian(0.3, asset="MKT")
     mom = fm.StochasticDrift(0.2, 0.05, 1.0, 0.3, asset="MOM")
@@ -167,7 +182,7 @@ def test_linear_combination_ols_recovers_weights_constant_sigma():
         assert abs(sigma_hat - combo.sigma) < Z * combo.sigma / np.sqrt(2 * len(res.output))
 
 
-def test_regime_switching_recovers_transitions_and_regime_parameters():
+def test_regime_switching_recovers_transitions_and_regime_parameters() -> None:
     P = np.array([[0.95, 0.04, 0.01], [0.05, 0.9, 0.05], [0.02, 0.08, 0.9]])
     x1, x2 = fm.Brownian(0.3, asset="X1"), fm.Brownian(0.3, asset="X2")
     regimes = [
@@ -190,7 +205,9 @@ def test_regime_switching_recovers_transitions_and_regime_parameters():
 
     # Given the true regimes, OLS of the output on the shared sources, within each regime,
     # recovers that regime's combination.
-    inputs = res.sources["R0"].sources
+    r0 = res.sources["R0"]
+    assert isinstance(r0, fm.PathResult)
+    inputs = r0.sources
     X_all = np.column_stack([inputs["X1"].output["X1"], inputs["X2"].output["X2"]])
     for k, reg in enumerate(regimes):
         rows = r == k
