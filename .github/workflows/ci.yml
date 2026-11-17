@@ -22,5 +22,8 @@ jobs:
           poetry run ruff check src tests
           poetry run ruff format --check src tests
 
+      - name: Type check
+        run: poetry run mypy
+
       - name: Test
         run: poetry run pytest

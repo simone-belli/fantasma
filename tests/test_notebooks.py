@@ -14,12 +14,12 @@ NOTEBOOKS = sorted((Path(__file__).parent.parent / "notebooks").glob("*.ipynb"))
 pytestmark = pytest.mark.notebooks
 
 
-def test_one_notebook_per_model():
+def test_one_notebook_per_model() -> None:
     assert len(NOTEBOOKS) == 6
 
 
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.stem)
-def test_notebook_runs(path, monkeypatch):
+def test_notebook_runs(path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MPLBACKEND", "Agg")
     nb = nbformat.read(path, as_version=4)
     nbclient.NotebookClient(nb, timeout=120, kernel_name="python3").execute(cwd=str(path.parent))

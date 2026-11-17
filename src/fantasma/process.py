@@ -12,8 +12,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 Inputs = Mapping[str, np.ndarray]
 
@@ -37,7 +39,7 @@ class Process(ABC):
     :meth:`observe` and :attr:`hidden_states`.
     """
 
-    params: dict[str, object]
+    params: dict[str, Any]
     state_names: tuple[str, ...]
     observable_states: tuple[str, ...]
     asset_names: tuple[str, ...]
@@ -69,7 +71,7 @@ class Process(ABC):
         """Hidden state values, shape ``(..., len(hidden_states))``."""
         return state[..., self._indices(self.hidden_states)]
 
-    def param(self, name: str, inputs: Inputs):
+    def param(self, name: str, inputs: Inputs) -> Any:
         """Parameter ``name``, or the value driving it in this step if it is a wired input."""
         return inputs[name] if name in inputs else self.params[name]
 
@@ -99,7 +101,7 @@ def check_assets(assets: str | Sequence[str], n: int | None = None) -> tuple[str
     return names
 
 
-def check_finite(name: str, value) -> float:
+def check_finite(name: str, value: float) -> float:
     try:
         v = float(value)
     except (TypeError, ValueError):
@@ -109,21 +111,23 @@ def check_finite(name: str, value) -> float:
     return v
 
 
-def check_positive(name: str, value) -> float:
+def check_positive(name: str, value: float) -> float:
     v = check_finite(name, value)
     if v <= 0:
         raise ValueError(f"{name} must be positive, got {value!r}")
     return v
 
 
-def check_non_negative(name: str, value) -> float:
+def check_non_negative(name: str, value: float) -> float:
     v = check_finite(name, value)
     if v < 0:
         raise ValueError(f"{name} must be non-negative, got {value!r}")
     return v
 
 
-def check_array(name: str, value, shape: tuple[int, ...] | None = None, positive=False):
+def check_array(
+    name: str, value: ArrayLike, shape: tuple[int, ...] | None = None, positive: bool = False
+) -> np.ndarray:
     """A finite float array, broadcast to ``shape`` if given (scalars allowed)."""
     try:
         arr = np.asarray(value, dtype=float)

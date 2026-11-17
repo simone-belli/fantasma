@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Literal, overload
+
 import numpy as np
 import pandas as pd
 
+from ._types import FreqLike, TimestampLike
+from .combination import Node, PathResult, is_node, simulate_nodes
 from .grid import RegularGrid, TimeGrid
 from .noise import GaussianNoise, Noise
 from .output import hidden_frame, log_return_frame
 from .process import Process
 
+# One path of a model with ``return_hidden``: its log returns and its hidden state.
+WithHidden = tuple[pd.DataFrame, pd.DataFrame]
 
-def one_or_list(results: list, n_paths: int):
+
+def one_or_list[T](results: list[T], n_paths: int) -> T | list[T]:
     """The single path itself when ``n_paths`` is 1, else the list of paths."""
     return results[0] if n_paths == 1 else results
 
@@ -58,19 +66,154 @@ def step_states(
     return states.transpose(1, 0, 2)
 
 
+@overload
 def simulate(
-    process,
+    process: Process,
     *,
-    start=None,
-    freq=None,
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
     seed: int,
     n_steps: int | None = None,
-    end=None,
+    end: TimestampLike | None = None,
+    n_paths: Literal[1] = 1,
+    return_hidden: Literal[False] = False,
+    noise: Noise | None = None,
+    days_per_year: float | None = None,
+) -> pd.DataFrame: ...
+
+
+@overload
+def simulate(
+    process: Process,
+    *,
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
+    seed: int,
+    n_steps: int | None = None,
+    end: TimestampLike | None = None,
+    n_paths: Literal[1] = 1,
+    return_hidden: Literal[True],
+    noise: Noise | None = None,
+    days_per_year: float | None = None,
+) -> WithHidden: ...
+
+
+@overload
+def simulate(
+    process: Process,
+    *,
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
+    seed: int,
+    n_steps: int | None = None,
+    end: TimestampLike | None = None,
+    n_paths: int = 1,
+    return_hidden: Literal[False] = False,
+    noise: Noise | None = None,
+    days_per_year: float | None = None,
+) -> pd.DataFrame | list[pd.DataFrame]: ...
+
+
+@overload
+def simulate(
+    process: Process,
+    *,
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
+    seed: int,
+    n_steps: int | None = None,
+    end: TimestampLike | None = None,
+    n_paths: int = 1,
+    return_hidden: Literal[True],
+    noise: Noise | None = None,
+    days_per_year: float | None = None,
+) -> WithHidden | list[WithHidden]: ...
+
+
+@overload
+def simulate(
+    process: Node | Sequence[Node],
+    *,
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
+    seed: int,
+    n_steps: int | None = None,
+    end: TimestampLike | None = None,
+    n_paths: Literal[1] = 1,
+    return_hidden: Literal[False] = False,
+    noise: Noise | None = None,
+    days_per_year: float | None = None,
+) -> pd.DataFrame: ...
+
+
+@overload
+def simulate(
+    process: Node | Sequence[Node],
+    *,
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
+    seed: int,
+    n_steps: int | None = None,
+    end: TimestampLike | None = None,
+    n_paths: Literal[1] = 1,
+    return_hidden: Literal[True],
+    noise: Noise | None = None,
+    days_per_year: float | None = None,
+) -> PathResult: ...
+
+
+@overload
+def simulate(
+    process: Node | Sequence[Node],
+    *,
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
+    seed: int,
+    n_steps: int | None = None,
+    end: TimestampLike | None = None,
+    n_paths: int = 1,
+    return_hidden: Literal[False] = False,
+    noise: Noise | None = None,
+    days_per_year: float | None = None,
+) -> pd.DataFrame | list[pd.DataFrame]: ...
+
+
+@overload
+def simulate(
+    process: Node | Sequence[Node],
+    *,
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
+    seed: int,
+    n_steps: int | None = None,
+    end: TimestampLike | None = None,
+    n_paths: int = 1,
+    return_hidden: Literal[True],
+    noise: Noise | None = None,
+    days_per_year: float | None = None,
+) -> PathResult | list[PathResult]: ...
+
+
+def simulate(
+    process: Process | Node | Sequence[Node],
+    *,
+    start: TimestampLike | None = None,
+    freq: FreqLike | None = None,
+    seed: int,
+    n_steps: int | None = None,
+    end: TimestampLike | None = None,
     n_paths: int = 1,
     return_hidden: bool = False,
     noise: Noise | None = None,
     days_per_year: float | None = None,
-) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame] | list:
+) -> (
+    pd.DataFrame
+    | WithHidden
+    | PathResult
+    | list[pd.DataFrame]
+    | list[WithHidden]
+    | list[PathResult]
+):
     """Simulate ``n_paths`` independent paths of ``process`` on a regular grid.
 
     With ``n_paths=1`` (the default) the single path is returned itself; with more, a list
@@ -95,8 +238,6 @@ def simulate(
     ``start``/``freq``/``n_steps``/``end`` must not be given (see
     :mod:`fantasma.combination`).
     """
-    from .combination import is_node, simulate_nodes
-
     if is_node(process) or (
         isinstance(process, (list, tuple)) and process and all(is_node(p) for p in process)
     ):
@@ -112,14 +253,64 @@ def simulate(
             n_steps=n_steps,
             end=end,
         )
-        return one_or_list(paths, n_paths)
+        return paths[0] if n_paths == 1 else paths
     if start is None or freq is None:
         raise ValueError("give start and freq (and n_steps or end) to simulate a model")
     kwargs = {} if days_per_year is None else {"days_per_year": days_per_year}
     grid = RegularGrid(start, freq, n_steps=n_steps, end=end, **kwargs)
+    if not isinstance(process, Process):
+        raise TypeError(f"expected a Process, got {process!r}")
     return simulate_on(
         process, grid, seed=seed, n_paths=n_paths, return_hidden=return_hidden, noise=noise
     )
+
+
+@overload
+def simulate_on(
+    process: Process,
+    grid: TimeGrid,
+    *,
+    seed: int,
+    n_paths: Literal[1] = 1,
+    return_hidden: Literal[False] = False,
+    noise: Noise | None = None,
+) -> pd.DataFrame: ...
+
+
+@overload
+def simulate_on(
+    process: Process,
+    grid: TimeGrid,
+    *,
+    seed: int,
+    n_paths: Literal[1] = 1,
+    return_hidden: Literal[True],
+    noise: Noise | None = None,
+) -> WithHidden: ...
+
+
+@overload
+def simulate_on(
+    process: Process,
+    grid: TimeGrid,
+    *,
+    seed: int,
+    n_paths: int = 1,
+    return_hidden: Literal[False] = False,
+    noise: Noise | None = None,
+) -> pd.DataFrame | list[pd.DataFrame]: ...
+
+
+@overload
+def simulate_on(
+    process: Process,
+    grid: TimeGrid,
+    *,
+    seed: int,
+    n_paths: int = 1,
+    return_hidden: bool = False,
+    noise: Noise | None = None,
+) -> pd.DataFrame | WithHidden | list[pd.DataFrame] | list[WithHidden]: ...
 
 
 def simulate_on(
@@ -130,11 +321,12 @@ def simulate_on(
     n_paths: int = 1,
     return_hidden: bool = False,
     noise: Noise | None = None,
-):
+) -> pd.DataFrame | WithHidden | list[pd.DataFrame] | list[WithHidden]:
     """Like :func:`simulate`, on a prebuilt :class:`TimeGrid` (the single path itself when
     ``n_paths`` is 1, else a list)."""
     paths = simulate_states(process, grid, seed, n_paths, noise)
     frames = [log_return_frame(process, p, grid) for p in paths]
     if return_hidden:
-        frames = [(f, hidden_frame(process, p, grid)) for f, p in zip(frames, paths, strict=True)]
+        pairs = [(f, hidden_frame(process, p, grid)) for f, p in zip(frames, paths, strict=True)]
+        return one_or_list(pairs, n_paths)
     return one_or_list(frames, n_paths)

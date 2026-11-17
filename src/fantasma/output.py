@@ -53,8 +53,15 @@ def to_long(prices: pd.DataFrame, source: str = SOURCE) -> pd.DataFrame:
     held = prices.attrs.get(QUANTITY)
     if held is not None and held != PRICE:
         raise ValueError(f"to_long takes prices, got {held!r}; use fm.to_prices first")
-    key = prices.index.name or "ts"
-    long = prices.rename_axis(index=key, columns="symbol").stack().rename("close").to_frame()
+    key = str(prices.index.name or "ts")
+    stacked = prices.rename_axis(index=key, columns="symbol").stack()
+    assert isinstance(stacked, pd.Series)  # single-level columns stack to a Series
+    long = stacked.rename("close").to_frame()
     long["source"] = pd.Series(source, index=long.index, dtype="string")
-    long.index = long.index.set_levels(long.index.levels[1].astype("string"), level="symbol")
+    index = long.index
+    assert isinstance(index, pd.MultiIndex)
+    # pandas-stubs does not accept an Index as the new level, which pandas does (and needs here,
+    # to keep the "string" dtype).
+    symbols = index.levels[1].astype("string")
+    long.index = index.set_levels(symbols, level="symbol")  # type: ignore[call-overload]
     return long.sort_index()

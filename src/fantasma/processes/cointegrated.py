@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
+from numpy.typing import ArrayLike
 
 from ..process import Inputs, Process, check_array, check_assets
 from .ou import half_life_to_kappa, ou_step
@@ -25,12 +26,12 @@ class Cointegrated(Process):
 
     def __init__(
         self,
-        loadings,
-        spread_half_lives,
-        factor_sigmas,
-        spread_sigmas,
+        loadings: ArrayLike,
+        spread_half_lives: ArrayLike,
+        factor_sigmas: ArrayLike,
+        spread_sigmas: ArrayLike,
         assets: Sequence[str],
-        initial_prices=100.0,
+        initial_prices: ArrayLike = 100.0,
     ):
         B = check_array("loadings", loadings)
         if B.ndim == 1:
@@ -76,7 +77,10 @@ class Cointegrated(Process):
     def observe(self, state: np.ndarray) -> np.ndarray:
         k = self.n_factors
         f, s = state[..., :k], state[..., k:]
-        return np.log(self.params["initial_prices"]) + f @ self.params["loadings"].T + s
+        log_prices: np.ndarray = (
+            np.log(self.params["initial_prices"]) + f @ self.params["loadings"].T + s
+        )
+        return log_prices
 
     def hidden(self, state: np.ndarray) -> np.ndarray:
         return state

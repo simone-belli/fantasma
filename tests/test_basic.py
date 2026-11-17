@@ -1,40 +1,45 @@
 """Checks required of every process (SPEC section 8, basic checks)."""
 
+from collections.abc import Callable
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
-from conftest import ASSETS, HIDDEN
+from conftest import ASSETS, HIDDEN, Grid
 
 import fantasma as fm
 
-RUN = dict(start="2024-01-01", freq="10m", n_steps=500)
+RUN = Grid(start="2024-01-01", freq="10m", n_steps=500)
 
 
-def test_same_seed_same_output(process):
+def test_same_seed_same_output(process: fm.Process) -> None:
     a = fm.simulate(process, seed=7, n_paths=3, return_hidden=True, **RUN)
     b = fm.simulate(process, seed=7, n_paths=3, return_hidden=True, **RUN)
+    assert isinstance(a, list) and isinstance(b, list)
     for (pa, ha), (pb, hb) in zip(a, b, strict=True):
         pd.testing.assert_frame_equal(pa, pb)
         pd.testing.assert_frame_equal(ha, hb)
 
 
-def test_different_seeds_differ(process):
+def test_different_seeds_differ(process: fm.Process) -> None:
     a = fm.simulate(process, seed=1, **RUN)
     b = fm.simulate(process, seed=2, **RUN)
     assert not np.allclose(a.to_numpy(), b.to_numpy())
 
 
-def test_paths_independent_and_stable(process):
+def test_paths_independent_and_stable(process: fm.Process) -> None:
     paths = fm.simulate(process, seed=3, n_paths=4, **RUN)
+    assert isinstance(paths, list)
     assert not np.allclose(paths[0].to_numpy(), paths[1].to_numpy())
     # Asking for more paths leaves the first ones unchanged.
     first = fm.simulate(process, seed=3, n_paths=1, **RUN)
     pd.testing.assert_frame_equal(first, paths[0])
 
 
-def test_shape_index_and_names(name, process):
+def test_shape_index_and_names(name: str, process: fm.Process) -> None:
     paths = fm.simulate(process, seed=0, n_paths=2, return_hidden=True, **RUN)
-    assert len(paths) == 2
+    assert isinstance(paths, list) and len(paths) == 2
     log_returns, hidden = paths[0]
     start = pd.Timestamp("2024-01-01", tz="UTC")
     # One row per step, labelled at the end of the step: the start is not a row.
@@ -54,7 +59,7 @@ def test_shape_index_and_names(name, process):
     assert hidden.index[0] == start and hidden.index[1:].equals(log_returns.index)
 
 
-def test_daily_index(process):
+def test_daily_index(process: fm.Process) -> None:
     log_returns = fm.simulate(
         process, start="2024-01-01 15:30", freq="1d", end="2024-03-01", seed=0
     )
@@ -65,7 +70,7 @@ def test_daily_index(process):
     assert log_returns.index[-1] == pd.Timestamp("2024-03-01")
 
 
-def test_finite_and_not_exploding(process):
+def test_finite_and_not_exploding(process: fm.Process) -> None:
     log_returns, hidden = fm.simulate(
         process, start="2024-01-01", freq="1d", n_steps=3650, seed=11, return_hidden=True
     )
@@ -75,7 +80,7 @@ def test_finite_and_not_exploding(process):
     assert (prices.max() < 1e5).all() and (prices.min() > 1e-1).all()
 
 
-def test_long_format_matches_almanac(process):
+def test_long_format_matches_almanac(process: fm.Process) -> None:
     log_returns = fm.simulate(process, seed=0, **RUN)
     with pytest.raises(ValueError, match="to_prices"):
         fm.to_long(log_returns)
@@ -97,7 +102,7 @@ def test_long_format_matches_almanac(process):
         lambda: fm.Brownian(sigma=float("nan")),
         lambda: fm.Brownian(sigma=0.1, initial_price=0),
         lambda: fm.Brownian(sigma=0.1, asset=""),
-        lambda: fm.Brownian(0.1, mu="x"),
+        lambda: fm.Brownian(0.1, mu="x"),  # type: ignore[arg-type]
         lambda: fm.Brownian(0.1, mu=float("inf")),
         lambda: fm.OrnsteinUhlenbeck(theta=0, half_life=0, sigma=0.1),
         lambda: fm.OrnsteinUhlenbeck(theta=0, half_life=-1, sigma=0.1),
@@ -113,7 +118,7 @@ def test_long_format_matches_almanac(process):
         lambda: fm.StochasticDrift(sigma=-1, drift_mean=0, drift_half_life=1, drift_sigma=0.1),
     ],
 )
-def test_parameter_validation(make):
+def test_parameter_validation(make: Callable[[], object]) -> None:
     with pytest.raises(ValueError):
         make()
 
@@ -130,17 +135,17 @@ def test_parameter_validation(make):
         dict(start="2024-01-01", freq="10m", n_steps=10, n_paths=0),
     ],
 )
-def test_run_validation(kwargs):
+def test_run_validation(kwargs: dict[str, Any]) -> None:
     with pytest.raises(ValueError):
         fm.simulate(fm.Brownian(0.1), seed=0, **kwargs)
 
 
-def test_seed_required():
+def test_seed_required() -> None:
     with pytest.raises(ValueError):
-        fm.simulate(fm.Brownian(0.1), start="2024-01-01", freq="1d", n_steps=5, seed=None)
+        fm.simulate(fm.Brownian(0.1), start="2024-01-01", freq="1d", n_steps=5, seed=None)  # type: ignore[call-overload]
 
 
-def test_single_path_is_returned_itself():
+def test_single_path_is_returned_itself() -> None:
     one = fm.simulate(fm.Brownian(0.2), seed=3, **RUN)  # n_paths=1 is the default
     assert isinstance(one, pd.DataFrame)
     log_returns, hidden = fm.simulate(fm.Brownian(0.2), seed=3, return_hidden=True, **RUN)
@@ -153,12 +158,12 @@ def test_single_path_is_returned_itself():
     assert len(fm.simulate_on(fm.Brownian(0.2), grid, seed=3, n_paths=2)) == 2
 
 
-def test_brownian_drift_defaults_to_zero_and_enters_as_mu_dt():
+def test_brownian_drift_defaults_to_zero_and_enters_as_mu_dt() -> None:
     class Zero(fm.Noise):
-        def sample(self, rng, n_steps, n_shocks):
+        def sample(self, rng: np.random.Generator, n_steps: int, n_shocks: int) -> np.ndarray:
             return np.zeros((n_steps, n_shocks))
 
     assert fm.Brownian(0.2).params["mu"] == 0.0
-    run = dict(start="2024-01-01", freq="1d", n_steps=10, seed=0, noise=Zero())
+    run: dict[str, Any] = dict(start="2024-01-01", freq="1d", n_steps=10, seed=0, noise=Zero())
     np.testing.assert_array_equal(fm.simulate(fm.Brownian(0.2), **run), 0.0)
     np.testing.assert_allclose(fm.simulate(fm.Brownian(0.2, mu=0.3), **run), 0.3 / 365.25)

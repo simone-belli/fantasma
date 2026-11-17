@@ -27,9 +27,16 @@ drops ``attrs`` after some operations, and frames built outside Fantasma carry n
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Any
 
 import numpy as np
 import pandas as pd
+from numpy.typing import ArrayLike
+
+from ._types import TimestampLike
+
+# A per-column value: a scalar, one value per column, or a Series/mapping keyed by column.
+type PerColumn = ArrayLike | pd.Series | Mapping[Any, float]
 
 QUANTITY = "quantity"
 START = "start"
@@ -41,7 +48,9 @@ RETURN = "return"
 LOG_RETURN = "log_return"
 
 
-def per_column(name: str, value, columns: pd.Index, non_negative: bool = False) -> np.ndarray:
+def per_column(
+    name: str, value: PerColumn, columns: pd.Index, non_negative: bool = False
+) -> np.ndarray:
     """A scalar, a sequence with one value per column, or a Series/dict keyed by column."""
     n = len(columns)
     if isinstance(value, Mapping):
@@ -65,9 +74,11 @@ def per_column(name: str, value, columns: pd.Index, non_negative: bool = False) 
     return arr
 
 
-def log_return_attrs(start, initial_log_price: Mapping | None) -> dict:
+def log_return_attrs(
+    start: TimestampLike | None, initial_log_price: Mapping[Any, float] | None
+) -> dict[str, Any]:
     """The ``attrs`` of a log-return frame."""
-    attrs = {QUANTITY: LOG_RETURN}
+    attrs: dict[str, Any] = {QUANTITY: LOG_RETURN}
     if start is not None:
         attrs[START] = pd.Timestamp(start)
     if initial_log_price is not None:
@@ -75,7 +86,7 @@ def log_return_attrs(start, initial_log_price: Mapping | None) -> dict:
     return attrs
 
 
-def _expect(frame, quantity: str, hint: str) -> None:
+def _expect(frame: object, quantity: str, hint: str) -> None:
     if not isinstance(frame, pd.DataFrame):
         raise TypeError(f"expected a DataFrame, got {type(frame).__name__}")
     held = frame.attrs.get(QUANTITY)
@@ -83,13 +94,19 @@ def _expect(frame, quantity: str, hint: str) -> None:
         raise ValueError(f"expected {quantity}, got a frame holding {held!r}; {hint}")
 
 
-def _labelled(values, index, columns, quantity: str) -> pd.DataFrame:
+def _labelled(
+    values: np.ndarray, index: pd.Index, columns: pd.Index, quantity: str
+) -> pd.DataFrame:
     frame = pd.DataFrame(values, index=index, columns=columns, dtype="float64")
     frame.attrs[QUANTITY] = quantity
     return frame
 
 
-def to_log_prices(log_returns: pd.DataFrame, initial_price=None, start=None) -> pd.DataFrame:
+def to_log_prices(
+    log_returns: pd.DataFrame,
+    initial_price: PerColumn | None = None,
+    start: TimestampLike | None = None,
+) -> pd.DataFrame:
     """Log prices from log returns, with the start as an extra first row.
 
     ``initial_price`` is the price at the start (not its log): a scalar, one value per column,
@@ -129,7 +146,11 @@ def to_log_prices(log_returns: pd.DataFrame, initial_price=None, start=None) -> 
     return _labelled(levels, index.insert(0, start), columns, LOG_PRICE)
 
 
-def to_prices(log_returns: pd.DataFrame, initial_price=None, start=None) -> pd.DataFrame:
+def to_prices(
+    log_returns: pd.DataFrame,
+    initial_price: PerColumn | None = None,
+    start: TimestampLike | None = None,
+) -> pd.DataFrame:
     """Prices from log returns, with the start as an extra first row (see
     :func:`to_log_prices` for the arguments)."""
     _expect(log_returns, LOG_RETURN, "to_prices takes log returns")

@@ -1,21 +1,26 @@
 """LinearCombination: a model built from sources (models, data, other combinations)."""
 
+from collections.abc import Callable, Sequence
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
+from conftest import Grid
 
 import fantasma as fm
+from fantasma.combination import Node
 from fantasma.simulate import step_states
 
-GRID = dict(start="2024-01-01", freq="1d", n_steps=300)
+GRID = Grid(start="2024-01-01", freq="1d", n_steps=300)
 DT = 1 / 365.25
 
 
-def mkt():
+def mkt() -> fm.Brownian:
     return fm.Brownian(0.2, asset="MKT")
 
 
-def data(name="SPY", n_steps=300, seed=9, freq="1d"):
+def data(name: str = "SPY", n_steps: int = 300, seed: int = 9, freq: str = "1d") -> pd.Series:
     """A log-return Series, as real data converted with fm.from_prices would be."""
     r = fm.simulate(
         fm.Brownian(0.15, asset=name), start="2024-01-01", freq=freq, n_steps=n_steps, seed=seed
@@ -23,14 +28,16 @@ def data(name="SPY", n_steps=300, seed=9, freq="1d"):
     return r[name]
 
 
-def run(combos, **kw):
-    return fm.simulate(combos, return_hidden=True, **kw)
+def run(combos: Node | Sequence[Node], **kw: Any) -> fm.PathResult:
+    res = fm.simulate(combos, return_hidden=True, **kw)
+    assert isinstance(res, fm.PathResult)  # one path
+    return res
 
 
 # --- the formula ------------------------------------------------------------------------------
 
 
-def test_models_only_is_exact():
+def test_models_only_is_exact() -> None:
     m, mom = mkt(), fm.StochasticDrift(0.1, 0.05, 2.0, 0.3, asset="MOM")
     a = fm.LinearCombination([m, mom], weights=[1.2, 0.5], asset="A")
     res = run(a, seed=1, **GRID)
@@ -38,7 +45,7 @@ def test_models_only_is_exact():
     np.testing.assert_allclose(res.output["A"], 1.2 * sources[0] + 0.5 * sources[1])
 
 
-def test_data_only_is_exact_with_drift_on_uneven_index():
+def test_data_only_is_exact_with_drift_on_uneven_index() -> None:
     idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03", "2024-01-08", "2024-01-09"], name="date")
     x = pd.Series([0.01, -0.02, 0.03, 0.0], index=idx, name="X")
     combo = fm.LinearCombination([x], weights=[2.0], asset="Y", constant=0.5)
@@ -49,7 +56,7 @@ def test_data_only_is_exact_with_drift_on_uneven_index():
     assert res.output.attrs["start"] == pd.Timestamp("2024-01-01")
 
 
-def test_mixed_models_and_data_share_the_data_index():
+def test_mixed_models_and_data_share_the_data_index() -> None:
     spy = data(freq="1d")
     gappy = spy.iloc[::3]  # an uneven index: every third day
     m = mkt()
@@ -61,10 +68,11 @@ def test_mixed_models_and_data_share_the_data_index():
         res.output["A"], res.sources["MKT"].output["MKT"] - 0.3 * gappy.to_numpy()
     )
     # The model was simulated on the data's gaps: its start is the data's recorded start.
+    assert isinstance(res.sources["MKT"], fm.SourceRealisation)
     assert res.sources["MKT"].hidden.index[0] == spy.attrs["start"]
 
 
-def test_noise_scale_and_custom_noise():
+def test_noise_scale_and_custom_noise() -> None:
     m = mkt()
     combo = fm.LinearCombination([m], weights=[1.0], sigma=0.3, asset="A")
     res = run(combo, seed=4, start="2000-01-01", freq="1d", n_steps=20_000)
@@ -73,7 +81,7 @@ def test_noise_scale_and_custom_noise():
     assert abs(sigma_hat - 0.3) < 4 * 0.3 / np.sqrt(2 * len(resid))
 
     class Zero(fm.Noise):
-        def sample(self, rng, n_steps, n_shocks):
+        def sample(self, rng: np.random.Generator, n_steps: int, n_shocks: int) -> np.ndarray:
             return np.zeros((n_steps, n_shocks))
 
     quiet = run(combo, seed=4, noise=Zero(), **GRID)
@@ -83,7 +91,7 @@ def test_noise_scale_and_custom_noise():
 # --- sharing realisations ----------------------------------------------------------------------
 
 
-def test_same_model_object_is_simulated_once():
+def test_same_model_object_is_simulated_once() -> None:
     m = mkt()
     a = fm.LinearCombination([m], weights=[1.2], asset="A")
     b = fm.LinearCombination([m], weights=[0.8], asset="B")
@@ -92,14 +100,14 @@ def test_same_model_object_is_simulated_once():
     np.testing.assert_allclose(res.output["A"] / 1.2, res.output["B"] / 0.8)
 
 
-def test_equal_but_distinct_models_are_independent():
+def test_equal_but_distinct_models_are_independent() -> None:
     a = fm.LinearCombination([mkt()], weights=[1.0], asset="A")
     b = fm.LinearCombination([fm.Brownian(0.2, asset="MKT2")], weights=[1.0], asset="B")
     res = run([a, b], seed=1, **GRID)
     assert not np.allclose(res.output["A"], res.output["B"])
 
 
-def test_assets_of_one_multi_asset_model_share_one_realisation():
+def test_assets_of_one_multi_asset_model_share_one_realisation() -> None:
     coint = fm.Cointegrated([[1.0], [0.5], [2.0]], 0.1, 0.2, 0.05, ["X", "Y", "Z"])
     a = fm.LinearCombination([(coint, "X")], weights=[1.0], asset="A")
     b = fm.LinearCombination([(coint, "Y")], weights=[1.0], asset="B")
@@ -114,26 +122,27 @@ def test_assets_of_one_multi_asset_model_share_one_realisation():
     np.testing.assert_allclose(res.output["B"], res.sources["X"].output["Y"])
 
 
-def test_nested_combinations():
+def test_nested_combinations() -> None:
     m = mkt()
     sector = fm.LinearCombination([m], weights=[1.0], sigma=0.1, asset="SECTOR")
     stock = fm.LinearCombination([sector, m], weights=[0.9, 0.2], asset="STOCK")
     both = run([sector, stock], seed=3, **GRID)
     alone = run(stock, seed=3, **GRID)
-    assert isinstance(alone.sources["SECTOR"], fm.PathResult)
-    sector_r = alone.sources["SECTOR"].output["SECTOR"]
+    nested = alone.sources["SECTOR"]
+    assert isinstance(nested, fm.PathResult)
+    sector_r = nested.output["SECTOR"]
     np.testing.assert_allclose(
         alone.output["STOCK"], 0.9 * sector_r + 0.2 * alone.sources["MKT"].output["MKT"]
     )
     # The nested combination shares MKT with the outer one.
-    assert alone.sources["SECTOR"].sources["MKT"] is alone.sources["MKT"]
+    assert nested.sources["MKT"] is alone.sources["MKT"]
     assert list(both.output.columns) == ["SECTOR", "STOCK"]
 
 
 # --- the result -------------------------------------------------------------------------------
 
 
-def test_path_result_and_plain_output():
+def test_path_result_and_plain_output() -> None:
     m, mom = mkt(), fm.StochasticDrift(0.1, 0.05, 2.0, 0.3, asset="MOM")
     spy = data()
     combo = fm.LinearCombination([m, mom, spy], weights=[1.0, 0.5, -0.2], sigma=0.1, asset="A")
@@ -143,6 +152,7 @@ def test_path_result_and_plain_output():
     hidden = res.sources["MOM"].hidden
     assert list(hidden.columns) == ["drift.mu"] and len(hidden) == len(spy) + 1
     assert res.sources["SPY"].output["SPY"].equals(spy)
+    assert isinstance(res.sources["SPY"], fm.SourceRealisation)
     assert res.sources["SPY"].hidden.shape[1] == 0
 
     plain = fm.simulate(combo, seed=0)
@@ -150,7 +160,7 @@ def test_path_result_and_plain_output():
     assert plain.attrs["quantity"] == "log_return"
 
 
-def test_to_prices_starts_at_initial_price():
+def test_to_prices_starts_at_initial_price() -> None:
     combo = fm.LinearCombination([mkt()], weights=[1.0], asset="A", initial_price=50.0)
     out = fm.simulate(combo, seed=0, **GRID)
     prices = fm.to_prices(out)
@@ -158,10 +168,11 @@ def test_to_prices_starts_at_initial_price():
     np.testing.assert_allclose(prices.iloc[0], 50.0)
 
 
-def test_reproducible_and_path_stable():
+def test_reproducible_and_path_stable() -> None:
     combo = fm.LinearCombination([mkt(), data()], weights=[1.0, 0.5], sigma=0.2, asset="A")
     a = fm.simulate(combo, seed=7, n_paths=3)
     b = fm.simulate(combo, seed=7, n_paths=3)
+    assert isinstance(a, list) and isinstance(b, list)
     for x, y in zip(a, b, strict=True):
         pd.testing.assert_frame_equal(x, y)
     assert not np.allclose(a[0], a[1])
@@ -174,7 +185,7 @@ def test_reproducible_and_path_stable():
 # --- validation -------------------------------------------------------------------------------
 
 
-def _coint():
+def _coint() -> fm.Cointegrated:
     return fm.Cointegrated([[1.0], [0.5]], 0.1, 0.2, 0.05, ["X", "Y"])
 
 
@@ -205,15 +216,15 @@ def _coint():
             lambda: fm.LinearCombination([data().reset_index(drop=True)], [1.0], asset="A"),
             "DatetimeIndex",
         ),
-        (lambda: fm.LinearCombination(["x"], [1.0], asset="A"), "must be a model"),
+        (lambda: fm.LinearCombination(["x"], [1.0], asset="A"), "must be a model"),  # type: ignore[list-item]
     ],
 )
-def test_validation_at_creation(make, match):
+def test_validation_at_creation(make: Callable[[], object], match: str) -> None:
     with pytest.raises((ValueError, TypeError), match=match):
         make()
 
 
-def test_validation_at_simulation():
+def test_validation_at_simulation() -> None:
     with_data = fm.LinearCombination([data()], weights=[1.0], asset="A")
     with pytest.raises(ValueError, match="do not pass"):
         fm.simulate(with_data, seed=0, **GRID)
@@ -228,15 +239,15 @@ def test_validation_at_simulation():
     with pytest.raises(ValueError, match="two different sources"):
         fm.simulate([models_only, other], seed=0, **GRID)
     with pytest.raises(ValueError, match="seed"):
-        fm.simulate(models_only, seed=None, **GRID)
+        fm.simulate(models_only, seed=None, **GRID)  # type: ignore[call-overload]
 
 
-def test_plain_models_still_need_a_grid():
+def test_plain_models_still_need_a_grid() -> None:
     with pytest.raises(ValueError, match="start and freq"):
         fm.simulate(mkt(), seed=0, n_steps=5)
 
 
-def test_single_path_is_returned_itself():
+def test_single_path_is_returned_itself() -> None:
     combo = fm.LinearCombination([mkt()], weights=[1.0], sigma=0.1, asset="A")
     assert isinstance(fm.simulate(combo, seed=0, **GRID), pd.DataFrame)
     one = fm.simulate(combo, seed=0, return_hidden=True, **GRID)

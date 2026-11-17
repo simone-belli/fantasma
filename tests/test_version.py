@@ -17,21 +17,21 @@ PYPROJECT = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["ver
 HINT = "pyproject.toml is the source of truth; re-run `poetry install` after changing it."
 
 
-def test_pyproject_version_is_pep440():
+def test_pyproject_version_is_pep440() -> None:
     # Release versions, optionally with a pre-, post- or dev-release suffix.
     pattern = r"\d+(\.\d+)*((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?"
     assert re.fullmatch(pattern, PYPROJECT), f"not a PEP 440 version: {PYPROJECT!r}"
 
 
-def test_package_version_matches_pyproject():
+def test_package_version_matches_pyproject() -> None:
     assert fantasma.__version__ == PYPROJECT, HINT
 
 
-def test_installed_metadata_matches_pyproject():
+def test_installed_metadata_matches_pyproject() -> None:
     assert version("fantasma") == PYPROJECT, HINT
 
 
-def test_no_hardcoded_version_in_sources():
+def test_no_hardcoded_version_in_sources() -> None:
     # Any version literal in the package would drift from pyproject.toml on the next bump.
     literal = re.compile(r"""__version__\s*=\s*["']\d+\.\d+""")
     offenders = [
@@ -48,7 +48,7 @@ OWNER = "Simone Belli"
 COPYRIGHT = f"Copyright (c) 2026 {OWNER}"
 
 
-def test_ownership_is_consistent():
+def test_ownership_is_consistent() -> None:
     """The author and copyright line match across the license, metadata and docs."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     assert {"name": OWNER} in project["authors"]

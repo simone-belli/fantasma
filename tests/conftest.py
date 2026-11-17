@@ -1,9 +1,21 @@
+from collections.abc import Callable
+from typing import TypedDict
+
 import pytest
 
 import fantasma as fm
 
+
+class Grid(TypedDict):
+    """The grid arguments of ``fm.simulate``, spread into it with ``**``."""
+
+    start: str
+    freq: str
+    n_steps: int
+
+
 # One factory per v1 process, with reasonable parameters.
-PROCESSES = {
+PROCESSES: dict[str, Callable[[], fm.Process]] = {
     "brownian": lambda: fm.Brownian(sigma=0.2, asset="RW"),
     "brownian_drift": lambda: fm.Brownian(0.2, mu=0.1, asset="DN"),
     "ou": lambda: fm.OrnsteinUhlenbeck(theta=4.6, half_life=0.1, sigma=0.3, asset="OU"),
@@ -37,10 +49,11 @@ HIDDEN = {
 
 
 @pytest.fixture(params=sorted(PROCESSES))
-def name(request):
-    return request.param
+def name(request: pytest.FixtureRequest) -> str:
+    param: str = request.param
+    return param
 
 
 @pytest.fixture
-def process(name):
+def process(name: str) -> fm.Process:
     return PROCESSES[name]()
