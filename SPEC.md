@@ -68,7 +68,7 @@ Two further models are built from **sources** rather than from their own state: 
 - **Contract: every simulation produces log returns** (log price differences). One pandas DataFrame per path, indexed by timestamp, one column per asset; one row per step, labelled at the end of the step (the start instant is not a row). This holds for every model, linear combinations and regime switching included (their data sources are log returns too).
 - Each frame records its start timestamp and starting log prices in `attrs`, so it can be turned back into the exact price path.
 - Helpers derive the other quantities: prices and log prices (with the start as a first row) and relative returns; a further helper turns real prices into log returns.
-- Column names and index conventions match the Almanac format; prices from the helpers are the wide form of Almanac's close prices.
+- Column names and index conventions match the Almanac format. Time labels do not: a row is labelled at the end of its step, while Almanac labels a bar by the instant it opens, so prices from the helpers are Almanac's close prices relabelled to their close time (`ts + bar`).
 - Optional flag to return hidden state, as a separate DataFrame on the full grid (start included). For models built from sources, the flag returns a result object with the output, every source's realisation (its log returns and hidden state) and the regime paths.
 - v1 is close prices only. The output layer is kept separate from the simulation so that OHLC bars and volume can be added later.
 
