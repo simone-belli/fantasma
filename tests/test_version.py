@@ -59,3 +59,12 @@ def test_ownership_is_consistent() -> None:
     assert COPYRIGHT in (fantasma.__doc__ or "")
     for doc in ("README.md", "SPEC.md"):
         assert f"© 2026 {OWNER}" in (ROOT / doc).read_text(), doc
+
+
+# --- typing ---------------------------------------------------------------------------------
+
+
+def test_the_package_ships_a_py_typed_marker() -> None:
+    """Strictly typed dependents (Bottega) type-check calls into Fantasma only with the PEP 561
+    marker installed next to the package."""
+    assert (Path(fantasma.__file__).parent / "py.typed").is_file()

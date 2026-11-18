@@ -4,8 +4,9 @@ Kept apart from the simulation so OHLC bars and volume can be added later.
 
 A simulated path is a frame of **log returns** (see :mod:`fantasma.transforms`): index ``ts``
 (UTC) or ``date`` (naive) as in Almanac, one row per step labelled at its end, columns named
-``symbol``. ``fm.to_prices`` turns it into close prices, the wide form of Almanac's ``load()``,
-``load(...)["close"].unstack("symbol")``; :func:`to_long` gives Almanac's long form of those.
+``symbol``. ``fm.to_prices`` turns it into close prices and :func:`to_long` gives Almanac's long
+form of those. Almanac labels a bar by the instant it opens, Fantasma by the instant its step
+ends: the prices are ``almanac_data.load(...)["close"]`` relabelled to close time (``ts + bar``).
 """
 
 from __future__ import annotations

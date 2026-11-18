@@ -80,8 +80,7 @@ paths = fm.simulate(model, start="2024-01-01", freq="10m", n_steps=10_000, seed=
 
 ### Output format
 
-Frames follow Almanac's conventions, so `fm.to_prices(r)` is the wide form of Almanac's
-`load()`, i.e. `load(...)["close"].unstack("symbol")`:
+Frames follow Almanac's index and column conventions:
 
 | | intraday (`1m`, `10m`, `1h`) | daily (`1d`) |
 | --- | --- | --- |
@@ -91,6 +90,13 @@ Frames follow Almanac's conventions, so `fm.to_prices(r)` is the wide form of Al
 `fm.to_long(fm.to_prices(r))` gives Almanac's long layout: indexed by (`ts`|`date`, `symbol`),
 with `close` and `source` (`"fantasma"`) columns. It takes prices, and refuses a frame
 labelled as log returns. The hidden-state frame has columns named `state`.
+
+**Time labels differ from Almanac's bars.** A Fantasma row is labelled at the *end* of its step,
+the instant its price holds; an Almanac bar is labelled by the instant it *opens* (its close is
+the price one bar later). So `fm.to_prices(r)` (without its start row) is Almanac's
+`load(...)["close"].unstack("symbol")` relabelled to close time (`ts + bar`), which is how a
+backtester that keys bars by their close (e.g. Bottega) sees them. To compare with `load()`
+directly, shift the index back one bar. The same holds for `fm.to_long`.
 
 ### Models (v1)
 
